@@ -1,0 +1,477 @@
+using System.Collections.Generic;
+using UnityEngine;
+
+/// <summary>
+/// Shard:   small and fast, dies to any ball. The standard enemy.
+/// Brute:   huge and slow, takes two ball hits (it barrels on after the first).
+/// Missile: homes in on the thruster, but turns slower than the player can. If the
+///          thruster gets outside its forward cone it loses lock for good. Beeps while locked.
+/// Flash:   appears on the screen edge, aims at the thruster, locks its aim, then
+///          strikes in a straight line at lightning speed.
+/// </summary>
+public enum EnemyType { Shard, Brute, Missile, Flash }
+
+/// <summary>
+/// An enemy. Touching a ball damages both (the ball loses a hit point, the enemy loses
+/// one). Reaching the thruster costs the player a heart. (Circle-vs-circle checks.)
+/// </summary>
+public class EnemyMover : MonoBehaviour
+{
+    /// <summary>Every live enemy (used by the Repel blast).</summary>
+    public static readonly List<EnemyMover> All = new List<EnemyMover>();
+
+    [HideInInspector] public Vector2 moveDirection;
+    [HideInInspector] public float speed;
+    [HideInInspector] public float impactForce;
+    [HideInInspector] public PendulumController pendulumController;
+    [HideInInspector] public float radius = 0.2f;
+    [HideInInspector] public Color color = Color.red;
+
+    // Missile tuning.
+    [HideInInspector] public float missileTurnRate = 60f;   // deg/s, set by the spawner (grows per level)
+    public static float MissileLockAngle = 70f;      // half-angle of the lock cone
+    public static float MissileFuel = 9f;            // seconds of homing before it flies straight
+
+    // Flash tuning.
+    public static float FlashAimTime = 1.0f;         // tracks the player
+    public static float FlashLockTime = 0.4f;        // aim frozen, line flashes: dodge now!
+    public static float FlashDashSpeed = 32f;
+
+    public EnemyType Type => type;
+
+    EnemyType type;
+    Transform body;
+    SpriteRenderer bodySR, core, glow;
+    float spin, age, emitTimer, coreBase, bodyScale;
+    int hp = 1;
+    float hitCooldown, damageFlash;
+    Vector2 knock;                       // Repel knock-back velocity (decays)
+    const float KnockDrag = 2.5f;
+    bool dead;                           // killed this frame (Destroy is deferred)
+
+    public bool IsDead => dead;
+    public Vector2 Position => transform.position;
+    /// <summary>Current velocity, including any Repel knock-back.</summary>
+    public Vector2 Velocity => moveDirection * speed + knock;
+
+    void OnEnable() => All.Add(this);
+    void OnDisable() => All.Remove(this);
+
+    // Missile state.
+    bool locked;
+    float beepTimer;
+    SpriteRenderer lockLight;
+
+    // Flash state.
+    enum FlashPhase { Aim, Lock, Dash }
+    FlashPhase phase;
+    float phaseTime;
+    SpriteRenderer aimLine;
+    Vector2 lastPos;
+
+    public void Setup(EnemyType enemyType, Color enemyColor, Vector2 dir, float spd, float impact, PendulumController pc)
+    {
+        type = enemyType;
+        color = enemyColor;
+        moveDirection = dir.normalized;
+        speed = spd;
+        impactForce = impact;
+        pendulumController = pc;
+
+        Sprite bodySprite;
+        switch (type)
+        {
+            case EnemyType.Brute:
+                bodyScale = 1.9f;
+                radius = 0.82f;
+                hp = 2;
+                bodySprite = ProcSprites.Brute;
+                spin = (Random.value < 0.5f ? -1f : 1f) * Random.Range(15f, 30f);
+                impactForce *= 2f;
+                break;
+            case EnemyType.Missile:
+                bodyScale = 0.7f;
+                radius = 0.16f;
+                hp = 1;
+                bodySprite = ProcSprites.Missile;
+                locked = true;
+                break;
+            case EnemyType.Flash:
+                bodyScale = 0.6f;
+                radius = 0.17f;
+                hp = 1;
+                bodySprite = ProcSprites.Dart;
+                phase = FlashPhase.Aim;
+                speed = 0f;
+                break;
+            default:
+                bodyScale = 0.42f;
+                radius = 0.14f;
+                hp = 1;
+                bodySprite = ProcSprites.Shard;
+                break;
+        }
+
+        glow = Child("Glow", ProcSprites.Glow, new Color(color.r, color.g, color.b, 0.4f), 19, bodyScale * 2.3f);
+        bodySR = Child("Body", bodySprite, color, 20, bodyScale);
+        body = bodySR.transform;
+        coreBase = type == EnemyType.Brute ? bodyScale * 0.3f : bodyScale * 0.2f;
+        core = Child("Core", ProcSprites.Ball, Color.Lerp(color, Color.white, 0.6f), 21, coreBase);
+
+        if (type == EnemyType.Missile)
+        {
+            lockLight = Child("LockLight", ProcSprites.Ball, Color.clear, 22, 0.12f);
+            core.color = Color.clear;
+        }
+        if (type == EnemyType.Flash)
+        {
+            aimLine = Child("AimLine", ProcSprites.Pixel, Color.clear, 18, 1f);
+            Sfx.Play("charge");
+            ParticleBursts.Burst(transform.position, color, 16, 4f, 0.25f, 0.5f);
+        }
+        lastPos = transform.position;
+        FaceDirection();
+    }
+
+    SpriteRenderer Child(string name, Sprite sprite, Color c, int order, float scale)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(transform, false);
+        go.transform.localScale = Vector3.one * scale;
+        var sr = go.AddComponent<SpriteRenderer>();
+        sr.sprite = sprite;
+        sr.color = c;
+        sr.sortingOrder = order;
+        return sr;
+    }
+
+    void FaceDirection()
+    {
+        if (type == EnemyType.Brute) return;
+        float ang = Mathf.Atan2(moveDirection.y, moveDirection.x) * Mathf.Rad2Deg;
+        body.localRotation = Quaternion.Euler(0f, 0f, ang);
+        if (lockLight != null) lockLight.transform.localPosition = (Vector3)(moveDirection * bodyScale * 0.32f);
+    }
+
+    void Update()
+    {
+        if (dead) return;
+        float dt = Time.deltaTime;
+        age += dt;
+        hitCooldown -= dt;
+        var pc = pendulumController;
+
+        switch (type)
+        {
+            case EnemyType.Missile: UpdateMissile(dt, pc); break;
+            case EnemyType.Flash: UpdateFlash(dt, pc); break;
+        }
+
+        // Gravity wells bend the flight path (speed stays the same).
+        if (speed > 0f)
+        {
+            Vector2 pull = Vector2.zero;
+            foreach (var h in Hazard.All) pull += h.PullAt(transform.position);
+            if (pull != Vector2.zero)
+            {
+                moveDirection = (moveDirection * speed + pull * dt).normalized;
+                FaceDirection();
+            }
+        }
+
+        // Move in sub-steps no longer than the enemy's radius so fast enemies can't tunnel through.
+        lastPos = transform.position;
+        Vector2 delta = (moveDirection * speed + knock) * dt;
+        knock *= Mathf.Exp(-KnockDrag * dt);
+        float move = delta.magnitude;
+        int steps = Mathf.Max(1, Mathf.CeilToInt(move / Mathf.Max(0.05f, radius)));
+        for (int i = 0; i < steps; i++)
+        {
+            transform.position += (Vector3)(delta / steps);
+            if (CheckCollisions(pc)) return;
+        }
+
+        if (spin != 0f) body.Rotate(0f, 0f, spin * dt);
+        float pulseRate = type == EnemyType.Brute ? 5f : 20f;
+        core.transform.localScale = Vector3.one * coreBase * (1f + 0.2f * Mathf.Sin(age * pulseRate));
+
+        damageFlash = Mathf.MoveTowards(damageFlash, 0f, dt * 4f);
+        Color bc = Color.Lerp(color, Color.white, damageFlash);
+        if (type == EnemyType.Brute && hp == 1) bc *= 0.75f;   // cracked / weakened
+        bc.a = 1f;
+        bodySR.color = bc;
+
+        EmitExhaust(dt);
+
+        // Flew past and far off-screen (or lived too long) -> remove.
+        Vector2 p = transform.position;
+        Vector2 rel = p - GameManager.ViewCenter;
+        float far = GameManager.HalfExtents.magnitude + 4f;
+        bool movingAway = Vector2.Dot(rel, moveDirection) > 0f && speed > 0f;
+        if ((rel.sqrMagnitude > far * far && movingAway) || age > 40f)
+        {
+            dead = true;
+            Destroy(gameObject);
+        }
+    }
+
+    /// <summary>Ball and thruster contact. Returns true if this enemy was destroyed.</summary>
+    bool CheckCollisions(PendulumController pc)
+    {
+        Vector2 p = transform.position;
+
+        // Asteroids and gravity-well cores destroy enemies.
+        foreach (var h in Hazard.All)
+        {
+            if (!h.Crushes(p, radius * 0.7f)) continue;
+            ParticleBursts.Burst(p, color, type == EnemyType.Brute ? 30 : 10, 5f, 0.3f, 0.5f);
+            dead = true; Destroy(gameObject);
+            return true;
+        }
+
+        if (pc == null || !pc.IsAlive) return false;
+
+        // Ball contact: both take a hit.
+        if (hitCooldown <= 0f && pc.TryAbsorbHit(p, radius, color))
+        {
+            hp--;
+            if (hp <= 0)
+            {
+                ParticleBursts.Burst(p, color, type == EnemyType.Brute ? 40 : 10, type == EnemyType.Brute ? 7f : 5f, 0.3f, 0.6f);
+                if (type == EnemyType.Brute && GameManager.Instance != null) GameManager.Instance.AddShake(0.35f);
+                dead = true; Destroy(gameObject);
+                return true;
+            }
+            hitCooldown = 0.3f;   // don't chew through the same ball in consecutive frames
+            damageFlash = 1f;
+            speed *= 0.85f;
+            ParticleBursts.Burst(p, color, 16, 5f, 0.3f, 0.5f);
+        }
+
+        // Reached the thruster: lose a heart.
+        if (pc.CanBeHit)
+        {
+            float hitDist = radius + pc.CoreRadius;
+            if ((pc.PivotPosition - p).sqrMagnitude < hitDist * hitDist)
+            {
+                pc.TakeHit(moveDirection * impactForce, color);
+                ParticleBursts.Burst(p, color, 14, 5f, 0.25f, 0.5f);
+                dead = true; Destroy(gameObject);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Hit by a Spaceship turret bullet travelling along 'dir': takes one point of damage
+    /// (Brutes have two). Returns false if the enemy was already dead.
+    /// </summary>
+    public bool Shot(Vector2 dir)
+    {
+        if (dead) return false;
+        Vector2 p = transform.position;
+        hp--;
+        if (hp <= 0)
+        {
+            dead = true;
+            ParticleBursts.Burst(p, color, type == EnemyType.Brute ? 40 : 12, type == EnemyType.Brute ? 7f : 5f, 0.3f, 0.6f);
+            if (type == EnemyType.Brute && GameManager.Instance != null) GameManager.Instance.AddShake(0.3f);
+            Sfx.Play("pop", 0.35f);
+            Destroy(gameObject);
+            return true;
+        }
+        damageFlash = 1f;
+        knock += dir.normalized * 1.5f;
+        ParticleBursts.Burst(p, color, 12, 4f, 0.25f, 0.4f);
+        return true;
+    }
+
+    /// <summary>
+    /// Repel blast at 'from': if within 'radius', knocked away (stronger when closer) and turned
+    /// by 'turn' (0..1) toward flying away. Missiles lose their lock; a Flash that hasn't struck
+    /// yet starts aiming again. Never destroys the enemy.
+    /// </summary>
+    public void Repel(Vector2 from, float radius, float force, float turn)
+    {
+        Vector2 d = (Vector2)transform.position - from;
+        float dist = d.magnitude;
+        if (dist > radius) return;
+        Vector2 away = dist > 1e-3f ? d / dist : -moveDirection;
+        float falloff = 1f - 0.5f * dist / radius;   // 1 at the center, 0.5 at the edge
+        knock += away * force * falloff * (type == EnemyType.Brute ? 0.6f : 1f);
+
+        if (speed > 0f)
+        {
+            Vector2 nd = Vector2.Lerp(moveDirection, away, turn);
+            moveDirection = nd.sqrMagnitude > 1e-4f ? nd.normalized : away;
+            FaceDirection();
+        }
+        if (type == EnemyType.Missile) locked = false;
+        if (type == EnemyType.Flash && phase != FlashPhase.Dash)
+        {
+            phase = FlashPhase.Aim;
+            phaseTime = 0f;
+        }
+        damageFlash = Mathf.Max(damageFlash, 0.5f);
+    }
+
+    void EmitExhaust(float dt)
+    {
+        if (speed <= 0f) return;
+        emitTimer -= dt;
+        if (emitTimer > 0f) return;
+        switch (type)
+        {
+            case EnemyType.Brute: emitTimer = 0.06f; break;
+            case EnemyType.Missile: emitTimer = 0.015f; break;
+            case EnemyType.Flash: emitTimer = 0.01f; break;
+            default: emitTimer = 0.02f; break;
+        }
+        Vector2 back = -moveDirection * radius * (type == EnemyType.Missile ? 2.2f : 1f);
+        Color c = type == EnemyType.Missile ? new Color(1f, 0.7f, 0.3f, 0.7f) : new Color(color.r, color.g, color.b, 0.5f);
+        float size = type == EnemyType.Brute ? 0.45f : type == EnemyType.Missile ? 0.14f : 0.1f;
+        ParticleBursts.Emit((Vector2)transform.position + back + Random.insideUnitCircle * radius * 0.3f,
+            -moveDirection * (type == EnemyType.Missile ? 2f : 0.5f), c, size, type == EnemyType.Brute ? 0.5f : 0.3f);
+    }
+
+    // ---------------------------------------------------------------- missile
+
+    void UpdateMissile(float dt, PendulumController pc)
+    {
+        if (locked && (pc == null || !pc.IsAlive || age > MissileFuel)) locked = false;
+
+        if (locked)
+        {
+            Vector2 to = pc.PivotPosition - (Vector2)transform.position;
+            float angle = Vector2.SignedAngle(moveDirection, to);
+            if (Mathf.Abs(angle) > MissileLockAngle)
+            {
+                // Target slipped outside the cone: lock lost for good.
+                locked = false;
+                Sfx.Play("lock", 0.35f);
+            }
+            else
+            {
+                float turn = Mathf.Clamp(angle, -missileTurnRate * dt, missileTurnRate * dt);
+                moveDirection = (Quaternion.Euler(0f, 0f, turn) * moveDirection).normalized;
+                FaceDirection();
+
+                // Beep faster the closer it gets.
+                beepTimer -= dt;
+                if (beepTimer <= 0f)
+                {
+                    beepTimer = Mathf.Lerp(0.12f, 0.6f, Mathf.Clamp01(to.magnitude / 12f));
+                    Sfx.Play("lock", 0.6f);
+                }
+            }
+        }
+
+        bool blinkOn = locked && Mathf.Repeat(age * 8f, 1f) < 0.5f;
+        lockLight.color = blinkOn ? new Color(1f, 0.2f, 0.2f, 1f) : (locked ? new Color(0.5f, 0.1f, 0.1f, 1f) : new Color(0.3f, 0.3f, 0.3f, 1f));
+        glow.color = new Color(color.r, color.g, color.b, locked ? 0.45f : 0.2f);
+    }
+
+    // ------------------------------------------------------------------ flash
+
+    void UpdateFlash(float dt, PendulumController pc)
+    {
+        phaseTime += dt;
+        Vector2 pos = transform.position;
+        float lineLen = GameManager.HalfExtents.magnitude * 2.2f;
+
+        switch (phase)
+        {
+            case FlashPhase.Aim:
+                if (pc != null && pc.IsAlive)
+                {
+                    // Aim where the thruster WILL be if it keeps its current velocity: it keeps
+                    // moving during the lock delay, then the strike has to catch it.
+                    Vector2 to = PredictIntercept(pos, pc.PivotPosition, pc.PivotVelocity) - pos;
+                    if (to.sqrMagnitude > 0.01f) moveDirection = to.normalized;
+                    FaceDirection();
+                }
+                SetAimLine(pos, lineLen, 0.03f, 0.15f + 0.15f * Mathf.Repeat(age * 12f, 1f));
+                if (phaseTime >= FlashAimTime) { phase = FlashPhase.Lock; phaseTime = 0f; }
+                break;
+
+            case FlashPhase.Lock:
+                bool on = Mathf.Repeat(phaseTime * 16f, 1f) < 0.5f;
+                SetAimLine(pos, lineLen, on ? 0.09f : 0.05f, on ? 0.75f : 0.35f);
+                if (phaseTime >= FlashLockTime)
+                {
+                    phase = FlashPhase.Dash;
+                    phaseTime = 0f;
+                    speed = FlashDashSpeed;
+                    aimLine.color = Color.clear;
+                    Sfx.Play("zap");
+                    if (GameManager.Instance != null) GameManager.Instance.AddShake(0.25f);
+                }
+                break;
+
+            case FlashPhase.Dash:
+                // Lightning trail from where it was last frame.
+                Vector2 a = lastPos, b = pos;
+                Vector2 mid = (a + b) * 0.5f + new Vector2(-moveDirection.y, moveDirection.x) * Random.Range(-0.25f, 0.25f);
+                Segment(a, mid, color, 0.09f);
+                Segment(mid, b, color, 0.09f);
+                Segment(a, b, Color.white, 0.035f);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Where a target moving at constant velocity will be when the strike reaches it, if the
+    /// aim were locked right now (lock delay first, then a dash at FlashDashSpeed).
+    /// </summary>
+    static Vector2 PredictIntercept(Vector2 from, Vector2 targetPos, Vector2 targetVel)
+    {
+        float t0 = FlashLockTime;
+        float s = FlashDashSpeed;
+        Vector2 d = targetPos + targetVel * t0 - from;      // target relative to us when the dash starts
+        // Solve |d + v*tau| = s*tau for the smallest positive tau.
+        float a = Vector2.Dot(targetVel, targetVel) - s * s;
+        float b = 2f * Vector2.Dot(d, targetVel);
+        float c = Vector2.Dot(d, d);
+        float tau;
+        if (Mathf.Abs(a) < 1e-4f)
+        {
+            tau = Mathf.Abs(b) > 1e-4f ? -c / b : 0f;
+        }
+        else
+        {
+            float disc = b * b - 4f * a * c;
+            if (disc < 0f) return targetPos;
+            float sq = Mathf.Sqrt(disc);
+            float r1 = (-b - sq) / (2f * a), r2 = (-b + sq) / (2f * a);
+            tau = r1 > 0f && r2 > 0f ? Mathf.Min(r1, r2) : Mathf.Max(r1, r2);
+        }
+        if (tau < 0f) return targetPos;
+        return targetPos + targetVel * (t0 + tau);
+    }
+
+    void SetAimLine(Vector2 from, float length, float width, float alpha)
+    {
+        Transform t = aimLine.transform;
+        t.position = from + moveDirection * (length * 0.5f);
+        t.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(moveDirection.y, moveDirection.x) * Mathf.Rad2Deg);
+        t.localScale = new Vector3(length, width, 1f);
+        aimLine.color = new Color(color.r, color.g, color.b, alpha);
+    }
+
+    static void Segment(Vector2 a, Vector2 b, Color c, float width)
+    {
+        Vector2 d = b - a;
+        float len = d.magnitude;
+        if (len < 0.001f) return;
+        var go = new GameObject("Bolt");
+        go.transform.position = (a + b) * 0.5f;
+        go.transform.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg);
+        go.transform.localScale = new Vector3(len + width, width, 1f);
+        var sr = go.AddComponent<SpriteRenderer>();
+        sr.sprite = ProcSprites.Pixel;
+        sr.color = new Color(c.r, c.g, c.b, 0.9f);
+        sr.sortingOrder = 25;
+        go.AddComponent<FadeOut>().life = 0.3f;
+    }
+}
