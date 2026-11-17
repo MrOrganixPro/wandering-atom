@@ -296,8 +296,8 @@ MonoBehaviour:
   maxBoosterUpgrades: 5
   rareUnlockLevel: 3
   rareChance: 0.1
-  gameChangerUnlockLevel: 5
-  gameChangerChance: 0.1
+  characterUnlockLevel: 5
+  characterChance: 0.1
   mysteryRevealTime: 2.4
   challengerCoins: 3
   sluggishTighten: 0.7
@@ -305,6 +305,10 @@ MonoBehaviour:
   sluggishMaxBallArmor: 4
   sluggishUpgradeCap: 2
   sluggishOrbMultiplier: 2
+  fireRatePerUpgrade: 0.25
+  maxFireRateUpgrades: 5
+  turretRangePerUpgrade: 1
+  maxTurretRangeUpgrades: 5
   cameraSize: 7
   cameraSmoothTime: 0.25
   cameraLookAhead: 0.35
@@ -530,13 +534,13 @@ MonoBehaviour:
   chainColor: {r: 0.78, g: 0.7, b: 0.52, a: 1}
   spinSpeed: 160
   spinClockwise: 0
-  spinDrive: 14
+  spinDrive: 15
   spinResponse: 6
-  spacingStrength: 2.5
-  ballInertia: 0.2
+  spacingStrength: 10
+  ballInertia: 0.05
   ballMaxHits: 1
   gravity: 7
-  airDrag: 0.15
+  airDrag: 0.08
   maxSpeed: 18
   minDistance: 0.35
   snapThreshold: 2.5
@@ -557,6 +561,13 @@ MonoBehaviour:
   boostMultiplierPerLevel: 0.2
   boostSettle: 10
   boostColor: {r: 0.45, g: 0.85, b: 1, a: 1}
+  turretArmLength: 0.62
+  turretFireRate: 1.6
+  turretRange: 5.5
+  turretBulletSpeed: 22
+  turretTurnSpeed: 900
+  turretMountTurnSpeed: 540
+  turretColor: {r: 0.8, g: 1, b: 0.35, a: 1}
 --- !u!1 &619394800
 GameObject:
   m_ObjectHideFlags: 0
