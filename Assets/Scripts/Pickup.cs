@@ -37,6 +37,8 @@ public class Pickup : MonoBehaviour
     bool collected;
     bool popping;           // level ended: waiting to pop, then swelling, then gone
     float popTimer;
+    Vector2 drift;          // pushed away when it can't be taken (orbitals full)
+    float fullWarnCooldown;
 
     public static Color ColorOf(PickupKind k)
     {
@@ -160,9 +162,35 @@ public class Pickup : MonoBehaviour
                 Vector2.up * 0.3f, sc, 0.11f, 0.6f, 1f);
         }
 
+        // Drift (from being bounced off) slows down quickly.
+        if (drift.sqrMagnitude > 1e-4f)
+        {
+            transform.position += (Vector3)(drift * dt);
+            drift *= Mathf.Exp(-3.5f * dt);
+        }
+        fullWarnCooldown -= dt;
+
         var pc = PendulumController.Instance;
-        // An orb stays on the map if there is no free slot for another ball.
-        if (pc != null && !(Kind == PickupKind.Orb && pc.IsFull) && pc.Touches(transform.position, radius)) Collect();
+        if (pc == null || !pc.Touches(transform.position, radius)) return;
+
+        // Orb with full orbitals: recycled if a Recycler can use it, otherwise it's bounced away
+        // with an "Orbitals full" warning.
+        if (Kind == PickupKind.Orb && pc.IsFull)
+        {
+            var gm = GameManager.Instance;
+            if (gm != null && gm.CanRecycleOrb) { Collect(); return; }
+            Vector2 away = (Vector2)transform.position - pc.PivotPosition;
+            away = away.sqrMagnitude > 1e-4f ? away.normalized : UnityEngine.Random.insideUnitCircle.normalized;
+            drift = away * 4f;
+            if (fullWarnCooldown <= 0f)
+            {
+                fullWarnCooldown = 1f;
+                if (gm != null) gm.WarnOrbitalsFull(transform.position);
+                ParticleBursts.Burst(transform.position, new Color(1f, 0.3f, 0.3f), 10, 3f, 0.2f, 0.4f);
+            }
+            return;
+        }
+        Collect();
     }
 
     /// <summary>

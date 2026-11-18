@@ -78,6 +78,43 @@ public static class ProcSprites
         return new Color(1, 1, 1, AA(0.008f - d, 0.006f));
     });
 
+    /// <summary>Turning arrow (Torque icon): a thick circular arc, open at the upper right,
+    /// running counter-clockwise into an arrowhead.</summary>
+    public static Sprite TurnArrow => Build("TurnArrow", 128, 128, 128f, (x, y) =>
+    {
+        const float R = 0.58f, half = 0.12f;          // arc radius and half-thickness
+        const float gapFrom = 30f, gapTo = 105f;      // open sector (degrees); the head sits at gapFrom
+        float r = Mathf.Sqrt(x * x + y * y);
+        float ang = Mathf.Atan2(y, x) * Mathf.Rad2Deg;
+        if (ang < 0f) ang += 360f;
+
+        // Arc: inside the ring band and outside the gap (distance to the gap measured along the arc).
+        float band = half - Mathf.Abs(r - R);
+        float toGap = ang <= gapFrom ? gapFrom - ang
+                    : ang >= gapTo ? Mathf.Min(ang - gapTo, 360f - ang + gapFrom)
+                    : -Mathf.Min(ang - gapFrom, gapTo - ang);
+        float arc = Mathf.Min(band, toGap * Mathf.Deg2Rad * r);
+
+        // Arrowhead at the gap's start, pointing counter-clockwise along the circle.
+        float a0 = gapFrom * Mathf.Deg2Rad;
+        Vector2 n = new Vector2(Mathf.Cos(a0), Mathf.Sin(a0));
+        Vector2 t = new Vector2(-n.y, n.x);
+        Vector2 b = n * R;
+        Vector2 p0 = b + t * 0.36f, p1 = b + n * 0.27f, p2 = b - n * 0.27f;
+        Vector2 q = new Vector2(x, y);
+        float head = Mathf.Min(EdgeIn(q, p0, p2), Mathf.Min(EdgeIn(q, p2, p1), EdgeIn(q, p1, p0)));   // p0→p2→p1 is CCW
+
+        float inside = Mathf.Max(arc, head);
+        return new Color(1f, 1f, 1f, AA(inside, 0.02f));
+    });
+
+    /// <summary>Signed distance from edge a→b of a counter-clockwise triangle (positive = inside).</summary>
+    static float EdgeIn(Vector2 q, Vector2 a, Vector2 b)
+    {
+        Vector2 e = b - a;
+        return (e.x * (q.y - a.y) - e.y * (q.x - a.x)) / e.magnitude;
+    }
+
     /// <summary>Spiky mine-like enemy body.</summary>
     public static Sprite Spiky => Build("Spiky", 128, 128, 128f, (x, y) =>
     {
@@ -119,6 +156,54 @@ public static class ProcSprites
         float v = 0.6f + 0.4f * Mathf.Clamp01(inside / 0.2f);
         if (inside < 0.04f) v *= 0.6f;                              // dark rim
         if (ay < 0.035f && x > -0.2f) v += 0.35f;                   // bright spine
+        return Gray(v, a);
+    });
+
+    /// <summary>
+    /// Broken Thruster pointing toward +x: round dented pod with a cracked hull and a wide,
+    /// bent engine bell at the back.
+    /// </summary>
+    public static Sprite BrokenThruster => Build("BrokenThruster", 128, 128, 128f, (x, y) =>
+    {
+        // Pod: a circle with a dent on the upper-front.
+        Vector2 c = new Vector2(0.12f, 0f);
+        float r = Vector2.Distance(new Vector2(x, y), c);
+        float th = Mathf.Atan2(y, x - c.x);
+        float dent = 0.08f * Mathf.Exp(-Mathf.Pow((th - 0.9f) / 0.25f, 2f));
+        float podEdge = 0.55f - dent;
+        float pod = podEdge - r;
+        // Engine bell: widens toward the back, bent slightly downward.
+        float bx = -0.35f - x;                                   // 0 at the throat, grows backward
+        float by = y + 0.08f * Mathf.Clamp01(bx / 0.5f);         // bent
+        float bellHalf = 0.16f + 0.3f * Mathf.Clamp01(bx / 0.5f);
+        float bell = Mathf.Min(Mathf.Min(bellHalf - Mathf.Abs(by), bx + 0.2f), 0.5f - bx);
+        float inside = Mathf.Max(pod, bell);
+        float a = AA(inside, 0.02f);
+
+        float v;
+        if (pod >= bell)
+        {
+            v = 0.55f + 0.35f * Mathf.Clamp01(1f - r / podEdge);
+            if (pod < 0.05f) v *= 0.55f;                                   // outline
+            float dh = Vector2.Distance(new Vector2(x, y), new Vector2(0f, 0.22f));
+            v += 0.25f * Mathf.Pow(Mathf.Clamp01(1f - dh / 0.3f), 2f);     // highlight
+            // Crack: a jagged line across the hull.
+            float crackY = -0.05f + 0.12f * Mathf.Sin(x * 14f) + 0.05f * Mathf.Sin(x * 31f);
+            if (Mathf.Abs(y - crackY) < 0.025f && x > -0.25f && x < 0.5f) v *= 0.35f;
+            // Rivets.
+            for (int i = 0; i < 4; i++)
+            {
+                float ra = i * 1.57f + 0.4f;
+                Vector2 rp = c + new Vector2(Mathf.Cos(ra), Mathf.Sin(ra)) * 0.4f;
+                if (Vector2.Distance(new Vector2(x, y), rp) < 0.035f) v *= 0.6f;
+            }
+        }
+        else
+        {
+            v = 0.45f + 0.2f * Mathf.Clamp01(1f - Mathf.Abs(by) / bellHalf);
+            if (bell < 0.04f) v *= 0.55f;
+            if (Mathf.Abs(bx - 0.2f) < 0.025f) v *= 0.6f;                   // bell seam
+        }
         return Gray(v, a);
     });
 

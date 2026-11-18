@@ -151,18 +151,19 @@ MonoBehaviour:
   firstSpawnDelay: 1.5
   startInterval: 1.8
   intervalMultiplierPerLevel: 0.92
-  minInterval: 0.5
+  minInterval: 0.3
   intervalDropPerSecond: 0.003
-  baseSpeed: 3.6
-  speedGrowthPerLevel: 0.08
-  speedGainPerSecond: 0.008
-  maxBaseSpeed: 9
+  baseSpeed: 5
+  speedGrowthPerLevel: 0.1
+  speedGainPerSecond: 0.01
+  maxBaseSpeed: 25
   shardSpeedMultiplier: 1.55
+  shardSize: 2.5
   bruteSpeedMultiplier: 0.6
   bruteChance: 0.25
   bruteChancePerLevel: 0.02
   maxBruteChance: 0.45
-  missileUnlockLevel: 3
+  missileUnlockLevel: 6
   missileChance: 0.05
   missileChancePerLevel: 0.01
   maxMissileChance: 0.1
@@ -172,24 +173,33 @@ MonoBehaviour:
   missileTurnRate: 60
   missileTurnRatePerLevel: 4
   maxMissileTurnRate: 120
-  flashUnlockLevel: 4
+  flashUnlockLevel: 8
   flashChance: 0.05
   flashChancePerLevel: 0.01
-  maxFlashChance: 0.12
-  bundleUnlockLevel: 2
+  maxFlashChance: 0.1
+  brokenUnlockLevel: 7
+  brokenChance: 0.04
+  brokenChancePerLevel: 0.08
+  maxBrokenChance: 0.08
+  brokenPushInterval: 2
+  brokenPushSpeedMultiplier: 2.8
+  brokenCoastDrag: 2.2
+  brokenMaxTurnPerPush: 75
+  brokenGiveUpDistance: 6
+  bundleUnlockLevel: 4
   bundleChance: 0.15
   bundleChancePerLevel: 0.03
   maxBundleChance: 0.4
-  bundleStartSize: 3
+  bundleStartSize: 2
   levelsPerExtraBundleEnemy: 2
-  maxBundleSize: 12
+  maxBundleSize: 15
   bundleSpacing: 0.5
   bundleExtraWarning: 0.4
   bundleSpeedMultiplier: 1.15
-  doubleUnlockLevel: 3
+  doubleUnlockLevel: 10
   doubleChance: 0.15
   doubleChancePerLevel: 0.04
-  maxDoubleChance: 0.4
+  maxDoubleChance: 0.55
   startWarningTime: 1.1
   warningDropPerLevel: 0.05
   minWarningTime: 0.6
@@ -202,6 +212,7 @@ MonoBehaviour:
   bundleColor: {r: 1, g: 0.25, b: 0.25, a: 1}
   missileColor: {r: 0.55, g: 1, b: 0.35, a: 1}
   flashColor: {r: 1, g: 0.95, b: 0.3, a: 1}
+  brokenColor: {r: 0.7, g: 0.55, b: 1, a: 1}
   pendulumController: {fileID: 556543094}
 --- !u!4 &93381503
 Transform:
@@ -295,9 +306,9 @@ MonoBehaviour:
   maxRepelUpgrades: 5
   maxBoosterUpgrades: 5
   rareUnlockLevel: 3
-  rareChance: 0.1
+  rareChance: 0.05
   characterUnlockLevel: 5
-  characterChance: 0.1
+  characterChance: 0.05
   mysteryRevealTime: 2.4
   challengerCoins: 3
   sluggishTighten: 0.7
@@ -536,15 +547,17 @@ MonoBehaviour:
   spinClockwise: 0
   spinDrive: 15
   spinResponse: 6
-  spacingStrength: 10
-  ballInertia: 0.05
+  spacingStrength: 5
+  ballInertia: 0.2
   ballMaxHits: 1
   gravity: 7
-  airDrag: 0.08
+  airDrag: 0.25
   maxSpeed: 18
   minDistance: 0.35
   snapThreshold: 2.5
   substeps: 4
+  snapSoundCooldown: 0.12
+  speedTrail: 0.8
   invulnerableTime: 1.5
   impactScale: 0.8
   repelRadius: 4.5

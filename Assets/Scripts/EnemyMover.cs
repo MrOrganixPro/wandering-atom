@@ -4,12 +4,15 @@ using UnityEngine;
 /// <summary>
 /// Shard:   small and fast, dies to any ball. The standard enemy.
 /// Brute:   huge and slow, takes two ball hits (it barrels on after the first).
-/// Missile: homes in on the thruster, but turns slower than the player can. If the
-///          thruster gets outside its forward cone it loses lock for good. Beeps while locked.
-/// Flash:   appears on the screen edge, aims at the thruster, locks its aim, then
-///          strikes in a straight line at lightning speed.
+/// Missile: homes in on the thruster for as long as it lives, but turns slower than the player
+///          can, so it can be outmaneuvered (a Repel blast breaks its lock briefly). Beeps while locked.
+/// Flash:   appears on the screen edge, aims at the thruster, locks its aim, then strikes in a
+///          straight line at lightning speed. It stops at the far edge and strikes again, until killed.
+/// Broken Thruster: 2 hit points. No steady engine: every few seconds it sputters out one
+///          push toward the thruster (it can only turn so far per push), then coasts and slows
+///          down. Each push is weaker than the last, and after a while the engine dies and it drifts off.
 /// </summary>
-public enum EnemyType { Shard, Brute, Missile, Flash }
+public enum EnemyType { Shard, Brute, Missile, Flash, Broken }
 
 /// <summary>
 /// An enemy. Touching a ball damages both (the ball loses a hit point, the enemy loses
@@ -29,13 +32,20 @@ public class EnemyMover : MonoBehaviour
 
     // Missile tuning.
     [HideInInspector] public float missileTurnRate = 60f;   // deg/s, set by the spawner (grows per level)
-    public static float MissileLockAngle = 70f;      // half-angle of the lock cone
-    public static float MissileFuel = 9f;            // seconds of homing before it flies straight
+    public static float MissileRelockTime = 1.2f;    // seconds without lock after a Repel blast
 
     // Flash tuning.
     public static float FlashAimTime = 1.0f;         // tracks the player
     public static float FlashLockTime = 0.4f;        // aim frozen, line flashes: dodge now!
     public static float FlashDashSpeed = 32f;
+
+    // Broken Thruster tuning (set by the spawner before the first Update).
+    [HideInInspector] public float brokenPushInterval = 1.2f;   // seconds between pushes
+    [HideInInspector] public float brokenPushSpeed = 10f;       // speed right after a push
+    [HideInInspector] public float brokenCoastDrag = 2.2f;      // how fast it slows down between pushes
+    [HideInInspector] public float brokenActiveTime = 6f;       // seconds of pushing before the engine dies
+    [HideInInspector] public float brokenPushFalloff = 0.85f;   // each push is this fraction of the previous
+    [HideInInspector] public float brokenDriftSpeed = 2f;       // speed it keeps after the engine dies
 
     public EnemyType Type => type;
 
@@ -59,6 +69,7 @@ public class EnemyMover : MonoBehaviour
 
     // Missile state.
     bool locked;
+    float relockTimer;
     float beepTimer;
     SpriteRenderer lockLight;
 
@@ -69,7 +80,13 @@ public class EnemyMover : MonoBehaviour
     SpriteRenderer aimLine;
     Vector2 lastPos;
 
-    public void Setup(EnemyType enemyType, Color enemyColor, Vector2 dir, float spd, float impact, PendulumController pc)
+    // Broken Thruster state.
+    float pushTimer, kick;
+    int pushes;
+    bool gaveUp;
+
+    public void Setup(EnemyType enemyType, Color enemyColor, Vector2 dir, float spd, float impact, PendulumController pc,
+        float sizeScale = 1f)
     {
         type = enemyType;
         color = enemyColor;
@@ -104,9 +121,16 @@ public class EnemyMover : MonoBehaviour
                 phase = FlashPhase.Aim;
                 speed = 0f;
                 break;
+            case EnemyType.Broken:
+                bodyScale = 0.8f;
+                radius = 0.28f;
+                hp = 2;
+                bodySprite = ProcSprites.BrokenThruster;
+                pushTimer = 0.15f;   // first push right after it appears
+                break;
             default:
-                bodyScale = 0.42f;
-                radius = 0.14f;
+                bodyScale = 0.42f * sizeScale;
+                radius = 0.14f * sizeScale;
                 hp = 1;
                 bodySprite = ProcSprites.Shard;
                 break;
@@ -165,6 +189,7 @@ public class EnemyMover : MonoBehaviour
         {
             case EnemyType.Missile: UpdateMissile(dt, pc); break;
             case EnemyType.Flash: UpdateFlash(dt, pc); break;
+            case EnemyType.Broken: UpdateBroken(dt, pc); break;
         }
 
         // Gravity wells bend the flight path (speed stays the same).
@@ -197,7 +222,7 @@ public class EnemyMover : MonoBehaviour
 
         damageFlash = Mathf.MoveTowards(damageFlash, 0f, dt * 4f);
         Color bc = Color.Lerp(color, Color.white, damageFlash);
-        if (type == EnemyType.Brute && hp == 1) bc *= 0.75f;   // cracked / weakened
+        if ((type == EnemyType.Brute || type == EnemyType.Broken) && hp == 1) bc *= 0.75f;   // cracked / weakened
         bc.a = 1f;
         bodySR.color = bc;
 
@@ -307,7 +332,7 @@ public class EnemyMover : MonoBehaviour
             moveDirection = nd.sqrMagnitude > 1e-4f ? nd.normalized : away;
             FaceDirection();
         }
-        if (type == EnemyType.Missile) locked = false;
+        if (type == EnemyType.Missile) { locked = false; relockTimer = MissileRelockTime; }
         if (type == EnemyType.Flash && phase != FlashPhase.Dash)
         {
             phase = FlashPhase.Aim;
@@ -318,7 +343,7 @@ public class EnemyMover : MonoBehaviour
 
     void EmitExhaust(float dt)
     {
-        if (speed <= 0f) return;
+        if (speed <= 0f || type == EnemyType.Broken) return;   // the Broken Thruster only puffs on pushes
         emitTimer -= dt;
         if (emitTimer > 0f) return;
         switch (type)
@@ -335,35 +360,116 @@ public class EnemyMover : MonoBehaviour
             -moveDirection * (type == EnemyType.Missile ? 2f : 0.5f), c, size, type == EnemyType.Brute ? 0.5f : 0.3f);
     }
 
+    // -------------------------------------------------------- broken thruster
+
+    void UpdateBroken(float dt, PendulumController pc)
+    {
+        Vector2 pos = transform.position;
+        bool target = pc != null && pc.IsAlive;
+
+        // Coast: the last push bleeds off (after giving up it keeps a slow drift so it leaves).
+        float floor = gaveUp ? brokenDriftSpeed : 0f;
+        speed = floor + (speed - floor) * Mathf.Exp(-brokenCoastDrag * dt);
+        if (speed < 0.05f) speed = 0.05f;   // keep a direction for the off-screen check
+
+        if (!gaveUp)
+        {
+            pushTimer -= dt;
+            if (!target || age > brokenActiveTime)
+            {
+                // Engine dies: a last cough of smoke, then it drifts on (and leaves the screen).
+                gaveUp = true;
+                speed = Mathf.Max(speed, brokenDriftSpeed);
+                ParticleBursts.Burst(pos, new Color(0.6f, 0.6f, 0.65f, 0.6f), 12, 2f, 0.2f, 0.6f);
+                Sfx.Play("sputter", 0.25f);
+            }
+            else if (pushTimer <= 0f)
+            {
+                Push(pc, pos);
+            }
+        }
+
+        // Charge-up: the core and glow flicker brighter right before the next push.
+        float charge = gaveUp ? 0f : Mathf.Clamp01(1f - pushTimer / Mathf.Min(0.45f, brokenPushInterval));
+        bool flicker = charge > 0f && Mathf.Repeat(age * 22f, 1f) < 0.5f;
+        core.color = Color.Lerp(Color.Lerp(color, Color.white, 0.6f), Color.white, flicker ? charge : charge * 0.4f);
+        glow.color = new Color(color.r, color.g, color.b, (gaveUp ? 0.2f : 0.35f) + 0.4f * charge);
+
+        // Push kick: the hull jolts forward and squashes.
+        kick = Mathf.MoveTowards(kick, 0f, dt * 5f);
+        body.localScale = new Vector3(bodyScale * (1f + 0.25f * kick), bodyScale * (1f - 0.15f * kick), 1f);
+
+        // Damaged engine: smoke while coasting, sparks now and then.
+        emitTimer -= dt;
+        if (emitTimer <= 0f)
+        {
+            emitTimer = 0.07f;
+            Vector2 back = -moveDirection * radius * 1.3f;
+            ParticleBursts.Emit(pos + back + Random.insideUnitCircle * 0.08f, -moveDirection * 0.4f + Random.insideUnitCircle * 0.3f,
+                new Color(0.6f, 0.6f, 0.65f, 0.35f), 0.16f, 0.6f);
+            if (Random.value < 0.15f)
+                ParticleBursts.Emit(pos + Random.insideUnitCircle * radius, Random.insideUnitCircle * 3f,
+                    new Color(1f, 0.85f, 0.4f, 1f), 0.05f, 0.25f);
+        }
+    }
+
+    void Push(PendulumController pc, Vector2 pos)
+    {
+        pushTimer = brokenPushInterval;
+        pushes++;
+
+        // Re-aim at the thruster (a little ahead of it).
+        Vector2 aimAt = pc.PivotPosition + pc.PivotVelocity * 0.25f;
+        Vector2 to = aimAt - pos;
+        if (to.sqrMagnitude > 1e-4f)
+        {
+            float angle = Vector2.SignedAngle(moveDirection, to) + Random.Range(-8f, 8f);
+            moveDirection = (Quaternion.Euler(0f, 0f, angle) * moveDirection).normalized;
+            FaceDirection();
+        }
+        // Every push is weaker than the one before.
+        float strength = Mathf.Pow(brokenPushFalloff, pushes - 1);
+        speed = Mathf.Max(brokenPushSpeed * strength, brokenDriftSpeed);
+        kick = Mathf.Lerp(0.4f, 1f, strength);
+
+        // Flame burst out the back.
+        Vector2 back = pos - moveDirection * radius * 1.4f;
+        int flames = Mathf.RoundToInt(Mathf.Lerp(5f, 14f, strength));
+        for (int i = 0; i < flames; i++)
+        {
+            Vector2 v = (-moveDirection + Random.insideUnitCircle * 0.5f) * Random.Range(3f, 7f);
+            Color c = Color.Lerp(new Color(1f, 0.9f, 0.5f, 1f), new Color(color.r, color.g, color.b, 0.8f), Random.value);
+            ParticleBursts.Emit(back, v, c, Random.Range(0.08f, 0.16f), Random.Range(0.2f, 0.4f));
+        }
+        Sfx.Play("sputter", Mathf.Lerp(0.25f, 0.5f, strength));
+    }
+
     // ---------------------------------------------------------------- missile
 
     void UpdateMissile(float dt, PendulumController pc)
     {
-        if (locked && (pc == null || !pc.IsAlive || age > MissileFuel)) locked = false;
+        bool target = pc != null && pc.IsAlive;
+        if (!target) locked = false;
+        else if (!locked)
+        {
+            relockTimer -= dt;
+            if (relockTimer <= 0f) locked = true;   // never gives up for good
+        }
 
         if (locked)
         {
             Vector2 to = pc.PivotPosition - (Vector2)transform.position;
             float angle = Vector2.SignedAngle(moveDirection, to);
-            if (Mathf.Abs(angle) > MissileLockAngle)
-            {
-                // Target slipped outside the cone: lock lost for good.
-                locked = false;
-                Sfx.Play("lock", 0.35f);
-            }
-            else
-            {
-                float turn = Mathf.Clamp(angle, -missileTurnRate * dt, missileTurnRate * dt);
-                moveDirection = (Quaternion.Euler(0f, 0f, turn) * moveDirection).normalized;
-                FaceDirection();
+            float turn = Mathf.Clamp(angle, -missileTurnRate * dt, missileTurnRate * dt);
+            moveDirection = (Quaternion.Euler(0f, 0f, turn) * moveDirection).normalized;
+            FaceDirection();
 
-                // Beep faster the closer it gets.
-                beepTimer -= dt;
-                if (beepTimer <= 0f)
-                {
-                    beepTimer = Mathf.Lerp(0.12f, 0.6f, Mathf.Clamp01(to.magnitude / 12f));
-                    Sfx.Play("lock", 0.6f);
-                }
+            // Beep faster the closer it gets.
+            beepTimer -= dt;
+            if (beepTimer <= 0f)
+            {
+                beepTimer = Mathf.Lerp(0.12f, 0.6f, Mathf.Clamp01(to.magnitude / 12f));
+                Sfx.Play("lock", 0.6f);
             }
         }
 
@@ -416,6 +522,24 @@ public class EnemyMover : MonoBehaviour
                 Segment(a, mid, color, 0.09f);
                 Segment(mid, b, color, 0.09f);
                 Segment(a, b, Color.white, 0.035f);
+
+                // Reached the far edge: stop there and line up the next strike.
+                Vector2 vc = GameManager.ViewCenter;
+                Vector2 half = GameManager.HalfExtents - new Vector2(0.8f, 0.8f);
+                Vector2 rel = pos - vc;
+                bool outside = Mathf.Abs(rel.x) > half.x || Mathf.Abs(rel.y) > half.y;
+                if (outside && Vector2.Dot(rel, moveDirection) > 0f && pc != null && pc.IsAlive)
+                {
+                    transform.position = new Vector3(
+                        vc.x + Mathf.Clamp(rel.x, -half.x, half.x),
+                        vc.y + Mathf.Clamp(rel.y, -half.y, half.y),
+                        transform.position.z);
+                    speed = 0f;
+                    phase = FlashPhase.Aim;
+                    phaseTime = 0f;
+                    Sfx.Play("charge");
+                    ParticleBursts.Burst(transform.position, color, 16, 4f, 0.25f, 0.5f);
+                }
                 break;
         }
     }

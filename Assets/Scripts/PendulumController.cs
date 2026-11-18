@@ -73,6 +73,10 @@ public class PendulumController : MonoBehaviour
     [Tooltip("Outward speed (units/s) above which a rope snap is shown/heard.")]
     public float snapThreshold = 2.5f;
     [Range(1, 8)] public int substeps = 4;
+    [Tooltip("Minimum seconds between two rope-snap sounds (many balls snapping at once play one sound).")]
+    public float snapSoundCooldown = 0.12f;
+    [Tooltip("How much the thruster's speed drags the balls behind it. 0 = balls keep orbiting normally at any speed, 1 = air is still (balls trail behind when fast).")]
+    [Range(0f, 1f)] public float speedTrail = 0.1f;
 
     [Header("Damage")]
     public float invulnerableTime = 1.5f;
@@ -504,6 +508,7 @@ public class PendulumController : MonoBehaviour
     // ---------------------------------------------------------------- physics
 
     float SpinDir => spinClockwise ? -1f : 1f;
+    float nextSnapSound;
 
     void Simulate(float dt)
     {
@@ -562,15 +567,25 @@ public class PendulumController : MonoBehaviour
         transform.position = new Vector3(pivot.x, pivot.y, transform.position.z);
 
         if (!alive) return;
+        float loudest = 0f;
+        int snapped = 0;
         foreach (var b in balls)
         {
             if (b.snap <= snapThreshold) continue;
+            loudest = Mathf.Max(loudest, b.snap);
+            snapped++;
             b.snapFlash = Mathf.Clamp01(b.snap / 8f);
             Vector2 n = (b.pos - pivot).normalized;
             for (int i = 0; i < 4; i++)
                 ParticleBursts.Emit(b.pos + n * BallRadius, (n + Random.insideUnitCircle * 0.6f) * 2f,
                     new Color(chainColor.r, chainColor.g, chainColor.b, 0.8f), 0.12f, 0.25f, 5f);
-            Sfx.Play("snap", Mathf.Clamp01(b.snap / 8f) * 0.6f);
+        }
+        // One sound for the whole frame, throttled, slightly louder when several snap together.
+        if (snapped > 0 && Time.time >= nextSnapSound)
+        {
+            nextSnapSound = Time.time + snapSoundCooldown;
+            float vol = Mathf.Clamp01(loudest / 8f) * 0.6f * Mathf.Min(1.4f, 1f + 0.1f * (snapped - 1));
+            Sfx.Play("snap", vol);
         }
     }
 
@@ -598,7 +613,10 @@ public class PendulumController : MonoBehaviour
         }
 
         b.vel += Vector2.down * gravity * h;
-        b.vel *= dragFactor;
+        // Air drag is measured against a frame that moves with the thruster (mostly), so high
+        // thruster speed no longer piles every ball up behind it; speedTrail keeps a little trail.
+        Vector2 airVel = pivotVel * (1f - speedTrail);
+        b.vel = airVel + (b.vel - airVel) * dragFactor;
         b.pos += b.vel * h;
 
         rel = b.pos - pivot;
@@ -626,7 +644,8 @@ public class PendulumController : MonoBehaviour
                 if (vr < 0f) b.vel -= n * vr * 1.5f;
             }
         }
-        b.vel = Vector2.ClampMagnitude(b.vel, maxSpeed);
+        // Speed limit relative to the thruster: a fast thruster must not cap the forward-swinging balls.
+        b.vel = pivotVel + Vector2.ClampMagnitude(b.vel - pivotVel, maxSpeed);
     }
 
     /// <summary>Balls in a shell push toward the middle of the gap between their neighbours.</summary>

@@ -55,7 +55,8 @@ public class GameManager : MonoBehaviour
         BallSize, PickupRange, Repel, Booster,
         Regeneration,              // rare
         Spaceship,                 // character
-        FireRate, TurretRange      // normal, only with the Spaceship
+        FireRate, TurretRange,     // normal, only with the Spaceship
+        Insight, CoinRecycler, HealthRecycler   // rare
     }
 
     /// <summary>
@@ -105,7 +106,13 @@ public class GameManager : MonoBehaviour
     public Vector2 wellInterval = new Vector2(22f, 35f);
     public float wellCoreRadius = 0.7f;
     public float wellPullRadius = 6.5f;
+    [Tooltip("Pull strength on the level wells unlock (acceleration near the core before the core boost).")]
     public float wellPullStrength = 6f;
+    [Tooltip("Pull strength added every level after wells unlock (no cap).")]
+    public float wellPullPerLevel = 0.6f;
+    [Tooltip("How much stronger the pull gets right next to the core than a plain linear falloff. "
+           + "1 = linear (weak at the edge, strong in the middle); higher = much stronger close in.")]
+    public float wellCorePullMultiplier = 2f;
     public Vector2 wellSpeed = new Vector2(0.3f, 0.6f);
     public int maxWells = 1;
 
@@ -149,6 +156,10 @@ public class GameManager : MonoBehaviour
     public int rareUnlockLevel = 3;
     [Tooltip("Chance a set of upgrade cards includes a rare one.")]
     [Range(0f, 1f)] public float rareChance = 0.1f;
+    [Tooltip("Coin Recycler: orbs recycled (with full orbitals) per coin.")]
+    public int orbsPerRecycledCoin = 5;
+    [Tooltip("Health Recycler: orbs recycled (with full orbitals, while hurt) per heart restored.")]
+    public int orbsPerRecycledHeart = 3;
 
     [Header("Characters (uncommon mystery box, costs 2 coins, one per run)")]
     [FormerlySerializedAs("gameChangerUnlockLevel")] public int characterUnlockLevel = 5;
@@ -198,6 +209,8 @@ public class GameManager : MonoBehaviour
     int upgMaxHealth, upgSpeed, upgThrust, upgTorque, upgBallArmor;
     int upgBallSize, upgPickupRange, upgRepel, upgBooster, upgRegen;
     int upgFireRate, upgTurretRange;
+    int upgInsight, upgCoinRecycler, upgHealthRecycler;   // rare, once per run
+    int coinRecycleProgress, heartRecycleProgress;        // orbs recycled toward the next coin / heart
     int levelCoins, pendingChoices, choiceIndex, choiceTotal, refundTotal, offerVersion;
     readonly List<UpgradeType> offer = new List<UpgradeType>();
     Character character = Character.None;
@@ -216,7 +229,10 @@ public class GameManager : MonoBehaviour
             case UpgradeType.Challenger:
             case UpgradeType.Sluggish:
             case UpgradeType.Spaceship: return UpgradeTier.Character;
-            case UpgradeType.Regeneration: return UpgradeTier.Rare;
+            case UpgradeType.Regeneration:
+            case UpgradeType.Insight:
+            case UpgradeType.CoinRecycler:
+            case UpgradeType.HealthRecycler: return UpgradeTier.Rare;
             default: return UpgradeTier.Normal;
         }
     }
@@ -239,6 +255,15 @@ public class GameManager : MonoBehaviour
     // ------------------------------------------------------- read-only state for the UI
 
     public int Lives => lives;
+    public bool HasInsight => upgInsight > 0;
+    public bool HasCoinRecycler => upgCoinRecycler > 0;
+    public bool HasHealthRecycler => upgHealthRecycler > 0;
+    public int CoinRecycleProgress => coinRecycleProgress;
+    public int HeartRecycleProgress => heartRecycleProgress;
+    public int OrbsPerRecycledCoin => Mathf.Max(1, orbsPerRecycledCoin);
+    public int OrbsPerRecycledHeart => Mathf.Max(1, orbsPerRecycledHeart);
+    /// <summary>Can an orb be picked up while the orbitals are full (it gets recycled)?</summary>
+    public bool CanRecycleOrb => HasCoinRecycler || (HasHealthRecycler && lives < MaxHealth);
     public int StarsCollected => starsCollected;
     public int StarsNeeded => starsNeeded;
     public int LevelCoins => levelCoins;
@@ -339,6 +364,11 @@ public class GameManager : MonoBehaviour
         upgRegen = Mathf.Clamp(PlayerPrefs.GetInt(UpgradeKeyPrefix + "Regeneration", 0), 0, 1);
         upgFireRate = Mathf.Clamp(PlayerPrefs.GetInt(UpgradeKeyPrefix + "FireRate", 0), 0, maxFireRateUpgrades);
         upgTurretRange = Mathf.Clamp(PlayerPrefs.GetInt(UpgradeKeyPrefix + "TurretRange", 0), 0, maxTurretRangeUpgrades);
+        upgInsight = Mathf.Clamp(PlayerPrefs.GetInt(UpgradeKeyPrefix + "Insight", 0), 0, 1);
+        upgCoinRecycler = Mathf.Clamp(PlayerPrefs.GetInt(UpgradeKeyPrefix + "CoinRecycler", 0), 0, 1);
+        upgHealthRecycler = Mathf.Clamp(PlayerPrefs.GetInt(UpgradeKeyPrefix + "HealthRecycler", 0), 0, 1);
+        coinRecycleProgress = Mathf.Max(0, PlayerPrefs.GetInt(UpgradeKeyPrefix + "CoinRecycleProgress", 0));
+        heartRecycleProgress = Mathf.Max(0, PlayerPrefs.GetInt(UpgradeKeyPrefix + "HeartRecycleProgress", 0));
     }
 
     void SaveUpgrades()
@@ -356,14 +386,22 @@ public class GameManager : MonoBehaviour
         PlayerPrefs.SetInt(UpgradeKeyPrefix + "Regeneration", upgRegen);
         PlayerPrefs.SetInt(UpgradeKeyPrefix + "FireRate", upgFireRate);
         PlayerPrefs.SetInt(UpgradeKeyPrefix + "TurretRange", upgTurretRange);
+        PlayerPrefs.SetInt(UpgradeKeyPrefix + "Insight", upgInsight);
+        PlayerPrefs.SetInt(UpgradeKeyPrefix + "CoinRecycler", upgCoinRecycler);
+        PlayerPrefs.SetInt(UpgradeKeyPrefix + "HealthRecycler", upgHealthRecycler);
+        PlayerPrefs.SetInt(UpgradeKeyPrefix + "CoinRecycleProgress", coinRecycleProgress);
+        PlayerPrefs.SetInt(UpgradeKeyPrefix + "HeartRecycleProgress", heartRecycleProgress);
         PlayerPrefs.Save();
     }
 
     void ResetUpgrades()
     {
+        lastPickWasExtra = false;
         upgMaxHealth = upgSpeed = upgThrust = upgTorque = upgBallArmor = 0;
         upgBallSize = upgPickupRange = upgRepel = upgBooster = upgRegen = 0;
         upgFireRate = upgTurretRange = 0;
+        upgInsight = upgCoinRecycler = upgHealthRecycler = 0;
+        coinRecycleProgress = heartRecycleProgress = 0;
         character = Character.None;
         SaveUpgrades();
         ApplyUpgrades();
@@ -445,31 +483,66 @@ public class GameManager : MonoBehaviour
         SetState(State.Upgrade);
     }
 
+    /// <summary>
+    /// Normal upgrades come in two groups (not shown differently on the cards):
+    /// Essentials (repair, max health, top speed, thrust, torque) and Extras (everything else).
+    /// </summary>
+    public static bool IsEssential(UpgradeType u) =>
+        u == UpgradeType.Heal || u == UpgradeType.MaxHealth || u == UpgradeType.Speed
+        || u == UpgradeType.Thrust || u == UpgradeType.Torque;
+    public static bool IsExtra(UpgradeType u) => TierOf(u) == UpgradeTier.Normal && !IsEssential(u);
+
+    bool lastPickWasExtra;   // the next offer then holds at most one Extra
+
     void RollOffer()
     {
         offerVersion++;
-        var pool = new List<UpgradeType> { UpgradeType.MaxHealth, UpgradeType.Speed };
-        if (upgThrust < ThrustTorqueCap) pool.Add(UpgradeType.Thrust);   // capped by The Sluggish
-        if (upgTorque < ThrustTorqueCap) pool.Add(UpgradeType.Torque);
+
+        // Essentials.
+        var essentials = new List<UpgradeType> { UpgradeType.MaxHealth, UpgradeType.Speed };
+        if (upgThrust < ThrustTorqueCap) essentials.Add(UpgradeType.Thrust);   // capped by The Sluggish
+        if (upgTorque < ThrustTorqueCap) essentials.Add(UpgradeType.Torque);
+        if (lives <= MaxHealth - 2) essentials.Add(UpgradeType.Heal);   // only when down at least two hearts
+
+        // Extras.
+        var extras = new List<UpgradeType>();
         // Ball Armor: only if one is banked (one per N levels), under the cap, and balls exist at all.
-        if (character != Character.Challenger && BallArmorBanked > 0) pool.Add(UpgradeType.BallArmor);
-        if (lives < MaxHealth) pool.Add(UpgradeType.Heal);   // never offer a useless heal
-        if (character != Character.Challenger && upgBallSize < maxBallSizeUpgrades) pool.Add(UpgradeType.BallSize);
-        if (upgPickupRange < maxPickupRangeUpgrades) pool.Add(UpgradeType.PickupRange);
-        if (upgRepel < maxRepelUpgrades) pool.Add(UpgradeType.Repel);
-        if (upgBooster < maxBoosterUpgrades) pool.Add(UpgradeType.Booster);
+        if (character != Character.Challenger && BallArmorBanked > 0) extras.Add(UpgradeType.BallArmor);
+        if (character != Character.Challenger && upgBallSize < maxBallSizeUpgrades) extras.Add(UpgradeType.BallSize);
+        if (upgPickupRange < maxPickupRangeUpgrades) extras.Add(UpgradeType.PickupRange);
+        if (upgRepel < maxRepelUpgrades) extras.Add(UpgradeType.Repel);
+        if (upgBooster < maxBoosterUpgrades) extras.Add(UpgradeType.Booster);
         if (character == Character.Spaceship)
         {
-            if (upgFireRate < maxFireRateUpgrades) pool.Add(UpgradeType.FireRate);
-            if (upgTurretRange < maxTurretRangeUpgrades) pool.Add(UpgradeType.TurretRange);
+            if (upgFireRate < maxFireRateUpgrades) extras.Add(UpgradeType.FireRate);
+            if (upgTurretRange < maxTurretRangeUpgrades) extras.Add(UpgradeType.TurretRange);
         }
 
         offer.Clear();
-        for (int i = 0; i < upgradeChoices && pool.Count > 0; i++)
+        // At least one Essential, always.
+        if (essentials.Count > 0)
         {
-            int k = Random.Range(0, pool.Count);
-            offer.Add(pool[k]);
-            pool.RemoveAt(k);
+            int k = Random.Range(0, essentials.Count);
+            offer.Add(essentials[k]);
+            essentials.RemoveAt(k);
+        }
+        // Fill the rest from both groups; right after an Extra was picked, at most one Extra.
+        int extraLimit = lastPickWasExtra ? 1 : int.MaxValue;
+        int extraCount = 0;
+        while (offer.Count < upgradeChoices)
+        {
+            bool extrasAllowed = extraCount < extraLimit && extras.Count > 0;
+            int total = essentials.Count + (extrasAllowed ? extras.Count : 0);
+            if (total == 0) break;
+            int k = Random.Range(0, total);
+            if (k < essentials.Count) { offer.Add(essentials[k]); essentials.RemoveAt(k); }
+            else { k -= essentials.Count; offer.Add(extras[k]); extras.RemoveAt(k); extraCount++; }
+        }
+        // Shuffle so the guaranteed Essential isn't always the first card.
+        for (int i = offer.Count - 1; i > 0; i--)
+        {
+            int j = Random.Range(0, i + 1);
+            UpgradeType t = offer[i]; offer[i] = offer[j]; offer[j] = t;
         }
 
         // Character mystery box: only on the first pick, only if every coin of the level was
@@ -481,21 +554,49 @@ public class GameManager : MonoBehaviour
         {
             UpgradeType[] characters = { UpgradeType.Challenger, UpgradeType.Sluggish, UpgradeType.Spaceship };
             UpgradeType gc = characters[Random.Range(0, characters.Length)];
-            if (offer.Count >= upgradeChoices) { mysteryIndex = Random.Range(0, offer.Count); offer[mysteryIndex] = gc; }
+            if (offer.Count >= upgradeChoices)
+            {
+                int slot = ReplaceableSlot(-1);
+                if (slot >= 0) { mysteryIndex = slot; offer[slot] = gc; }
+            }
             else { offer.Add(gc); mysteryIndex = offer.Count - 1; }
         }
 
-        // Rare card: replaces one normal card (never the mystery box). Regeneration is once per run.
-        if (upgRegen == 0 && level >= rareUnlockLevel && Random.value < rareChance)
+        // Rare card: replaces one normal card (never the mystery box). Each rare is once per run.
+        var rares = new List<UpgradeType>();
+        if (upgRegen == 0) rares.Add(UpgradeType.Regeneration);
+        if (upgInsight == 0) rares.Add(UpgradeType.Insight);
+        if (upgCoinRecycler == 0) rares.Add(UpgradeType.CoinRecycler);
+        if (upgHealthRecycler == 0) rares.Add(UpgradeType.HealthRecycler);
+        if (rares.Count > 0 && level >= rareUnlockLevel && Random.value < rareChance)
         {
-            if (offer.Count < upgradeChoices) offer.Add(UpgradeType.Regeneration);
+            UpgradeType rare = rares[Random.Range(0, rares.Count)];
+            if (offer.Count < upgradeChoices) offer.Add(rare);
             else
             {
-                int slot = Random.Range(0, offer.Count);
-                if (slot == mysteryIndex) slot = (slot + 1) % offer.Count;
-                if (slot != mysteryIndex) offer[slot] = UpgradeType.Regeneration;
+                int slot = ReplaceableSlot(mysteryIndex);
+                if (slot >= 0) offer[slot] = rare;
             }
         }
+    }
+
+    /// <summary>
+    /// A random card that a special card (Character box, Rare) may replace: never 'except',
+    /// and never the offer's last Essential (every pick keeps at least one). -1 if none.
+    /// </summary>
+    int ReplaceableSlot(int except)
+    {
+        int essentialCount = 0;
+        foreach (var u in offer) if (IsEssential(u)) essentialCount++;
+        var slots = new List<int>();
+        for (int i = 0; i < offer.Count; i++)
+        {
+            if (i == except) continue;
+            if (IsEssential(offer[i]) && essentialCount <= 1) continue;
+            if (!IsEssential(offer[i]) && TierOf(offer[i]) != UpgradeTier.Normal) continue;
+            slots.Add(i);
+        }
+        return slots.Count > 0 ? slots[Random.Range(0, slots.Count)] : -1;
     }
 
     /// <summary>Picks card 'index' of the current offer (ignored while it can't be picked yet).</summary>
@@ -506,6 +607,7 @@ public class GameManager : MonoBehaviour
 
         UpgradeType picked = offer[index];
         int cost = IsCharacter(picked) ? 2 : 1;
+        lastPickWasExtra = IsExtra(picked);
         switch (picked)
         {
             case UpgradeType.Heal: lives = MaxHealth; break;
@@ -519,6 +621,9 @@ public class GameManager : MonoBehaviour
             case UpgradeType.Repel: upgRepel = Mathf.Min(maxRepelUpgrades, upgRepel + 1); break;
             case UpgradeType.Booster: upgBooster = Mathf.Min(maxBoosterUpgrades, upgBooster + 1); break;
             case UpgradeType.Regeneration: upgRegen = 1; break;
+            case UpgradeType.Insight: upgInsight = 1; break;
+            case UpgradeType.CoinRecycler: upgCoinRecycler = 1; break;
+            case UpgradeType.HealthRecycler: upgHealthRecycler = 1; break;
             case UpgradeType.FireRate: upgFireRate = Mathf.Min(maxFireRateUpgrades, upgFireRate + 1); break;
             case UpgradeType.TurretRange: upgTurretRange = Mathf.Min(maxTurretRangeUpgrades, upgTurretRange + 1); break;
             case UpgradeType.Spaceship: character = Character.Spaceship; break;
@@ -579,6 +684,9 @@ public class GameManager : MonoBehaviour
             case UpgradeType.Repel: return "REPEL";
             case UpgradeType.Booster: return "EMERGENCY BOOSTER";
             case UpgradeType.Regeneration: return "REGENERATION";
+            case UpgradeType.Insight: return "INSIGHT";
+            case UpgradeType.CoinRecycler: return "COIN RECYCLER";
+            case UpgradeType.HealthRecycler: return "HEALTH RECYCLER";
             case UpgradeType.Spaceship: return "THE SPACESHIP";
             case UpgradeType.FireRate: return "FIRE RATE";
             case UpgradeType.TurretRange: return "TURRET RANGE";
@@ -633,6 +741,12 @@ public class GameManager : MonoBehaviour
                      + "\n" + UnlockStep(upgBooster, maxBoosterUpgrades);
             case UpgradeType.Regeneration:
                 return "Regain one heart\nat the start of\nevery level";
+            case UpgradeType.Insight:
+                return "See asteroids and\ngravity wells coming\nfrom off-screen";
+            case UpgradeType.CoinRecycler:
+                return "Orbs you have no\nroom for are recycled:\nevery " + OrbsPerRecycledCoin + " make a coin";
+            case UpgradeType.HealthRecycler:
+                return "Orbs you have no\nroom for are recycled\nwhile hurt: every " + OrbsPerRecycledHeart + "\nrestore a heart";
             case UpgradeType.Spaceship:
                 return "Your inner orbital\nbecomes two turrets\nthat shoot enemies.\nOrbs build them; they\ncan't be hit or block."
                      + "\nUnlocks Fire Rate and\nTurret Range upgrades.";
@@ -660,6 +774,9 @@ public class GameManager : MonoBehaviour
             case UpgradeType.Repel: return new Color(0.75f, 0.9f, 1f);
             case UpgradeType.Booster: return new Color(1f, 0.42f, 0.2f);
             case UpgradeType.Regeneration: return Pickup.HeartColor;
+            case UpgradeType.Insight: return new Color(0.7f, 0.55f, 1f);
+            case UpgradeType.CoinRecycler: return Pickup.CoinColor;
+            case UpgradeType.HealthRecycler: return new Color(1f, 0.5f, 0.62f);
             case UpgradeType.Spaceship: return new Color(0.8f, 1f, 0.35f);
             case UpgradeType.FireRate: return new Color(1f, 0.5f, 0.45f);
             case UpgradeType.TurretRange: return new Color(0.55f, 1f, 0.85f);
@@ -879,7 +996,11 @@ public class GameManager : MonoBehaviour
         go.transform.position = pos;
         var h = go.AddComponent<Hazard>();
         if (type == HazardType.Asteroid) h.InitAsteroid(r, vel);
-        else h.InitWell(wellCoreRadius, wellPullRadius, wellPullStrength, vel);
+        else
+        {
+            float strength = wellPullStrength + wellPullPerLevel * Mathf.Max(0, level - wellUnlockLevel);
+            h.InitWell(wellCoreRadius, wellPullRadius, strength, vel, wellCorePullMultiplier);
+        }
     }
 
     void ClearHazards()
@@ -900,6 +1021,56 @@ public class GameManager : MonoBehaviour
         heartAvailable = false;
     }
 
+    /// <summary>
+    /// An orb taken with full orbitals: Health Recycler first (only while hurt), otherwise
+    /// Coin Recycler. Enough recycled orbs restore a heart / give a coin.
+    /// </summary>
+    void RecycleOrb(Vector2 at)
+    {
+        if (HasHealthRecycler && lives < MaxHealth)
+        {
+            heartRecycleProgress++;
+            if (heartRecycleProgress >= OrbsPerRecycledHeart)
+            {
+                heartRecycleProgress = 0;
+                lives = Mathf.Min(MaxHealth, lives + 1);
+                Sfx.Play("orb");
+                ParticleBursts.Burst(pendulum.PivotPosition, Pickup.HeartColor, 24, 6f, 0.3f, 0.8f);
+                GameUI.FloatText(at, "+1 HEART", Pickup.HeartColor, 26f);
+            }
+            else
+            {
+                Sfx.Play("recycle");
+                GameUI.FloatText(at, "RECYCLED  " + heartRecycleProgress + "/" + OrbsPerRecycledHeart, Pickup.HeartColor);
+            }
+        }
+        else if (HasCoinRecycler)
+        {
+            coinRecycleProgress++;
+            if (coinRecycleProgress >= OrbsPerRecycledCoin)
+            {
+                coinRecycleProgress = 0;
+                levelCoins++;
+                Sfx.Play("coin");
+                ParticleBursts.Burst(at, Pickup.CoinColor, 24, 6f, 0.3f, 0.8f);
+                GameUI.FloatText(at, "+1 COIN", Pickup.CoinColor, 26f);
+            }
+            else
+            {
+                Sfx.Play("recycle");
+                GameUI.FloatText(at, "RECYCLED  " + coinRecycleProgress + "/" + OrbsPerRecycledCoin, Pickup.CoinColor);
+            }
+        }
+        SaveUpgrades();
+    }
+
+    /// <summary>An orb touched with no room for it and nothing to recycle it into.</summary>
+    public void WarnOrbitalsFull(Vector2 at)
+    {
+        Sfx.Play("full", 0.7f);
+        GameUI.FloatText(at, "ORBITALS FULL", new Color(1f, 0.25f, 0.25f), 24f);
+    }
+
     void OnPickupCollected(Pickup p)
     {
         stars.Remove(p);
@@ -910,7 +1081,8 @@ public class GameManager : MonoBehaviour
         switch (p.Kind)
         {
             case PickupKind.Orb:
-                if (pendulum.AddBall()) Sfx.Play("orb");
+                if (pendulum.IsFull) RecycleOrb(p.transform.position);
+                else if (pendulum.AddBall()) Sfx.Play("orb");
                 return;
             case PickupKind.Coin:
                 levelCoins++;

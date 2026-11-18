@@ -24,6 +24,12 @@ public static class Sfx
         clips["start"] = Synth("start", 0.25f, t => 440f + t * 1600f, 0f, 8f, 0.35f);
         clips["kick"]  = Synth("kick", 0.08f, t => 300f + t * 1500f, 0.35f, 30f, 0.25f);
         clips["snap"]  = Synth("snap", 0.06f, t => 160f, 0.7f, 45f, 0.35f);
+        // Orbitals full: a low, square-ish double buzz ("nope").
+        clips["full"]  = Synth("full", 0.2f, t => t < 0.09f ? 220f : 165f, 0.05f, 6f, 0.4f, 0.8f);
+        // Orb recycled: a quick falling chirp.
+        clips["recycle"] = Synth("recycle", 0.14f, t => 1400f - t * 5000f, 0f, 14f, 0.28f);
+        // Broken Thruster push: a rough, coughing low burst.
+        clips["sputter"] = Synth("sputter", 0.22f, t => 70f + 50f * Mathf.Abs(Mathf.Sin(t * 120f)), 0.6f, 11f, 0.55f, 0.6f);
         clips["star"]  = Synth("star", 0.35f, t => t < 0.08f ? 988f : 1480f, 0f, 7f, 0.4f);
         clips["orb"]   = Synth("orb", 0.22f, t => 600f + t * 3000f, 0f, 9f, 0.35f);
         clips["coin"]  = Synth("coin", 0.25f, t => t < 0.06f ? 1320f : 1760f, 0f, 10f, 0.3f);

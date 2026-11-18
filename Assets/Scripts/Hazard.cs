@@ -21,6 +21,7 @@ public class Hazard : MonoBehaviour
     public float radius;
     public Vector2 velocity;
     public float pullRadius, pullStrength;
+    public float corePullMultiplier = 1f;
 
     static readonly Color RockColor = new Color(0.66f, 0.6f, 0.54f);
     static readonly Color WellColor = new Color(0.6f, 0.35f, 1f);
@@ -29,6 +30,16 @@ public class Hazard : MonoBehaviour
     float spin, age;
     SpriteRenderer[] swirl;
     SpriteRenderer coreGlow;
+    SpriteRenderer cueIcon, cueGlow, cueArrow;   // Insight: edge-of-screen cue while off-screen
+
+    void Start()
+    {
+        Sprite icon = Type == HazardType.Asteroid ? ProcSprites.Asteroid(0) : ProcSprites.Ball;
+        cueGlow = Make("CueGlow", ProcSprites.Glow, Color.clear, 44, 1f);
+        cueIcon = Make("Cue", icon, Color.clear, 45, 1f);
+        cueArrow = Make("CueArrow", ProcSprites.Arrow, Color.clear, 45, 0.3f);
+        gameObject.AddComponent<HazardCue>().hazard = this;
+    }
 
     void OnEnable() => All.Add(this);
     void OnDisable() => All.Remove(this);
@@ -57,8 +68,9 @@ public class Hazard : MonoBehaviour
         body.localRotation = Quaternion.Euler(0f, 0f, Random.Range(0f, 360f));
     }
 
-    public void InitWell(float coreRadius, float pullR, float strength, Vector2 vel)
+    public void InitWell(float coreRadius, float pullR, float strength, Vector2 vel, float coreMultiplier = 1f)
     {
+        corePullMultiplier = Mathf.Max(1f, coreMultiplier);
         Type = HazardType.GravityWell;
         radius = coreRadius;
         pullRadius = pullR;
@@ -94,8 +106,10 @@ public class Hazard : MonoBehaviour
         Vector2 to = (Vector2)transform.position - p;
         float d = to.magnitude;
         if (d >= pullRadius || d < 0.01f) return Vector2.zero;
+        // 0 at the edge of the pull, 1 at the center; the boost ramps up sharply toward the core.
         float k = 1f - d / pullRadius;
-        return to / d * pullStrength * k;
+        float boost = Mathf.Lerp(1f, corePullMultiplier, k * k);
+        return to / d * pullStrength * k * boost;
     }
 
     void Update()
@@ -135,5 +149,52 @@ public class Hazard : MonoBehaviour
         float far = GameManager.HalfExtents.magnitude + Mathf.Max(radius, pullRadius) + 14f;
         if ((rel.sqrMagnitude > far * far && Vector2.Dot(rel, velocity) > 0f) || age > 240f)
             Destroy(gameObject);
+    }
+
+    /// <summary>
+    /// Insight (rare upgrade): while the hazard is off-screen, a cue sits on the screen edge
+    /// pointing at it. It grows and brightens as the hazard gets closer, and pulses faster
+    /// when it's heading toward the view.
+    /// </summary>
+    public void UpdateCue()
+    {
+        if (cueIcon == null) return;
+        var gm = GameManager.Instance;
+        Vector2 vc = GameManager.ViewCenter;
+        Vector2 half = GameManager.HalfExtents;
+        Vector2 d = (Vector2)transform.position - vc;
+        float extent = Type == HazardType.Asteroid ? radius : pullRadius * 0.6f;
+        bool onScreen = Mathf.Abs(d.x) < half.x + extent && Mathf.Abs(d.y) < half.y + extent;
+        if (gm == null || !gm.HasInsight || onScreen || gm.CurrentState != GameManager.State.Playing)
+        {
+            cueIcon.color = cueGlow.color = cueArrow.color = Color.clear;
+            return;
+        }
+
+        Vector2 inner = half - new Vector2(0.9f, 0.9f);
+        float k = Mathf.Min(inner.x / Mathf.Max(Mathf.Abs(d.x), 1e-4f), inner.y / Mathf.Max(Mathf.Abs(d.y), 1e-4f));
+        Vector2 pos = vc + d * k;
+        float beyond = Mathf.Max(0f, d.magnitude * (1f - k) - extent);
+        float close = 1f - Mathf.Clamp01(beyond / 20f);
+        bool incoming = Vector2.Dot(velocity, -d) > 0f;
+        float pulse = 1f + (incoming ? 0.15f : 0.05f) * Mathf.Sin(age * (incoming ? 9f : 3f));
+        float size = Mathf.Lerp(0.35f, 0.8f, close * close) * pulse;
+        Color c = Type == HazardType.Asteroid ? RockColor : WellColor;
+        Vector2 n = d.normalized;
+
+        // The cue is a child, so undo this object's own transform.
+        cueIcon.transform.position = pos;
+        cueIcon.transform.rotation = Quaternion.identity;
+        cueIcon.transform.localScale = Vector3.one * size;
+        cueIcon.color = new Color(c.r, c.g, c.b, 0.55f + 0.45f * close);
+
+        cueGlow.transform.position = pos;
+        cueGlow.transform.localScale = Vector3.one * size * 2.8f;
+        cueGlow.color = new Color(c.r, c.g, c.b, 0.15f + 0.3f * close);
+
+        cueArrow.transform.position = pos + n * (size * 0.6f + 0.2f);
+        cueArrow.transform.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(n.y, n.x) * Mathf.Rad2Deg);
+        cueArrow.transform.localScale = Vector3.one * (0.2f + 0.12f * close);
+        cueArrow.color = new Color(c.r, c.g, c.b, 0.5f + 0.4f * close);
     }
 }

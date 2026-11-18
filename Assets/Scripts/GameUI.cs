@@ -22,6 +22,17 @@ public class GameUI : MonoBehaviour
     // HUD
     VisualElement hud, shellsRow, heartsRow, speedBox, speedFill;
     Label levelLabel, starsLabel, shellsLabel, coinsLabel, characterLabel, bestLabel, speedLabel;
+
+    // Recycler progress (rare upgrades): a partly filled icon that completes with each orb.
+    class Meter { public VisualElement row, clip; public Label label; public int shown = -1, shownMax = -1; }
+    Meter heartMeter, coinMeter;
+
+    // Floating world-anchored texts ("ORBITALS FULL", recycling progress).
+    static GameUI instance;
+    VisualElement floatLayer;
+    class Floater { public Label label; public Vector2 world; public float age; }
+    readonly List<Floater> floaters = new List<Floater>();
+    const float FloatLife = 1.1f;
     readonly List<VisualElement> hearts = new List<VisualElement>();
 
     // Screens
@@ -54,6 +65,7 @@ public class GameUI : MonoBehaviour
     void Start()
     {
         gm = GetComponent<GameManager>();
+        instance = this;
 
         panelSettings = ScriptableObject.CreateInstance<PanelSettings>();
         panelSettings.name = "GameUI Panel";
@@ -213,9 +225,14 @@ public class GameUI : MonoBehaviour
         coinsLabel = Text(coinRow, "", 18, false, Pickup.CoinColor, TextAnchor.MiddleLeft);
         coinsLabel.style.marginLeft = 9;
 
+        heartMeter = MakeMeter(left, ProcSprites.Heart, Pickup.HeartColor);
+        coinMeter = MakeMeter(left, ProcSprites.Coin, Pickup.CoinColor);
+
         characterLabel = Text(left, "", 18, false, Color.white, TextAnchor.MiddleLeft);
         characterLabel.style.height = 26;
         characterLabel.style.marginLeft = 3;
+
+        floatLayer = Layer(hud);
 
         // Top-right: best level and health.
         var right = Box(hud);
@@ -401,11 +418,14 @@ public class GameUI : MonoBehaviour
         {
             case GameManager.UpgradeType.Heal:
             case GameManager.UpgradeType.MaxHealth:
-            case GameManager.UpgradeType.Regeneration: return ProcSprites.Heart;
+            case GameManager.UpgradeType.Regeneration:
+            case GameManager.UpgradeType.HealthRecycler: return ProcSprites.Heart;
+            case GameManager.UpgradeType.CoinRecycler: return ProcSprites.Coin;
+            case GameManager.UpgradeType.Insight: return ProcSprites.Asteroid(0);
             case GameManager.UpgradeType.BallArmor:
             case GameManager.UpgradeType.BallSize: return ProcSprites.Ball;
             case GameManager.UpgradeType.PickupRange: return ProcSprites.Star;
-            case GameManager.UpgradeType.Torque:
+            case GameManager.UpgradeType.Torque: return ProcSprites.TurnArrow;
             case GameManager.UpgradeType.Repel:
             case GameManager.UpgradeType.TurretRange: return ProcSprites.Ring;
             case GameManager.UpgradeType.FireRate: return ProcSprites.Dart;
@@ -661,8 +681,90 @@ public class GameUI : MonoBehaviour
         }
     }
 
+    /// <summary>HUD row with an icon that fills from the bottom, plus "n / max" text.</summary>
+    Meter MakeMeter(VisualElement parent, Sprite sprite, Color color)
+    {
+        var m = new Meter { row = Row(parent) };
+        m.row.style.height = 30;
+        var holder = Box(m.row);
+        holder.style.width = holder.style.height = 24;
+        holder.style.marginLeft = 3;
+        holder.style.flexShrink = 0;
+        var empty = Icon(holder, sprite, 24, new Color(1f, 1f, 1f, 0.18f));
+        empty.style.position = Position.Absolute;
+        m.clip = Box(holder);
+        m.clip.style.position = Position.Absolute;
+        m.clip.style.left = 0;
+        m.clip.style.bottom = 0;
+        m.clip.style.width = 24;
+        m.clip.style.overflow = Overflow.Hidden;
+        var full = Icon(m.clip, sprite, 24, color);
+        full.style.position = Position.Absolute;
+        full.style.left = 0;
+        full.style.bottom = 0;
+        m.label = Text(m.row, "", 18, false, color, TextAnchor.MiddleLeft);
+        m.label.style.marginLeft = 9;
+        Show(m.row, false);
+        return m;
+    }
+
+    static void UpdateMeter(Meter m, bool owned, int progress, int max)
+    {
+        Show(m.row, owned);
+        if (!owned || (m.shown == progress && m.shownMax == max)) return;
+        m.shown = progress;
+        m.shownMax = max;
+        m.clip.style.height = 24f * Mathf.Clamp01(progress / (float)Mathf.Max(1, max));
+        m.label.text = "recycle " + progress + " / " + max;
+    }
+
+    /// <summary>Short text that pops up at a world position, rises a little and fades.</summary>
+    public static void FloatText(Vector2 world, string text, Color color, float size = 20f)
+    {
+        if (instance == null || instance.floatLayer == null) return;
+        var l = Text(instance.floatLayer, text, size, true, color);
+        l.style.position = Position.Absolute;
+        l.style.width = 300;
+        l.style.height = 30;
+        instance.floaters.Add(new Floater { label = l, world = world });
+        instance.PlaceFloater(instance.floaters[instance.floaters.Count - 1]);
+    }
+
+    void PlaceFloater(Floater f)
+    {
+        var cam = Camera.main;
+        if (cam == null || root.panel == null) return;
+        Vector2 w = f.world + Vector2.up * (0.6f + f.age * 0.8f);
+        Vector2 p = RuntimePanelUtils.CameraTransformWorldToPanel(root.panel, w, cam);
+        f.label.style.left = p.x - 150f;
+        f.label.style.top = p.y - 15f;
+        float pop = f.age < 0.12f ? 1f + 0.35f * (1f - f.age / 0.12f) : 1f;
+        f.label.style.scale = new Scale(Vector3.one * pop);
+        f.label.style.opacity = Mathf.Clamp01((FloatLife - f.age) / 0.35f);
+    }
+
+    void UpdateFloaters()
+    {
+        for (int i = floaters.Count - 1; i >= 0; i--)
+        {
+            var f = floaters[i];
+            f.age += Time.unscaledDeltaTime;
+            if (f.age >= FloatLife || gm.CurrentState == GameManager.State.Title)
+            {
+                f.label.RemoveFromHierarchy();
+                floaters.RemoveAt(i);
+                continue;
+            }
+            PlaceFloater(f);
+        }
+    }
+
     void UpdateHud(GameManager.State st)
     {
+        UpdateFloaters();
+        UpdateMeter(heartMeter, gm.HasHealthRecycler, gm.HeartRecycleProgress, gm.OrbsPerRecycledHeart);
+        UpdateMeter(coinMeter, gm.HasCoinRecycler, gm.CoinRecycleProgress, gm.OrbsPerRecycledCoin);
+
         if (shownLevel != gm.Level) { shownLevel = gm.Level; levelLabel.text = "LEVEL " + shownLevel; }
         if (shownStars != gm.StarsCollected || shownNeeded != gm.StarsNeeded)
         {
