@@ -42,6 +42,9 @@ public static class Sfx
         // Spaceship turret: a short, buzzy laser chirp.
         clips["shoot"] = Synth("shoot", 0.11f, t => 1750f * Mathf.Exp(-t * 18f) + 420f, 0.06f, 20f, 0.32f, 0.5f);
         clips["reveal"] = Reveal();
+        // Core meltdown: a low, rising, trembling rumble; then the blast.
+        clips["meltdown"] = Synth("meltdown", 1.2f, t => 55f + 170f * t * t + 25f * Mathf.Sin(t * 70f), 0.45f, 0.4f, 0.5f, 0.3f);
+        clips["explode"] = Synth("explode", 1.5f, t => 95f * Mathf.Exp(-t * 3f) + 28f, 0.75f, 3.2f, 0.95f);
         clips["level"] = Synth("level", 0.9f, t => t < 0.15f ? 523f : t < 0.3f ? 659f : t < 0.45f ? 784f : 1046f, 0f, 2.5f, 0.45f);
     }
 

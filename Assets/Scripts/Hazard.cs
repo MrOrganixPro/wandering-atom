@@ -29,12 +29,12 @@ public class Hazard : MonoBehaviour
     Transform body;
     float spin, age;
     SpriteRenderer[] swirl;
-    SpriteRenderer coreGlow;
+    SpriteRenderer coreGlow, disk;
     SpriteRenderer cueIcon, cueGlow, cueArrow;   // Insight: edge-of-screen cue while off-screen
 
     void Start()
     {
-        Sprite icon = Type == HazardType.Asteroid ? ProcSprites.Asteroid(0) : ProcSprites.Ball;
+        Sprite icon = Type == HazardType.Asteroid ? ProcSprites.Asteroid(0) : ProcSprites.Ring;
         cueGlow = Make("CueGlow", ProcSprites.Glow, Color.clear, 44, 1f);
         cueIcon = Make("Cue", icon, Color.clear, 45, 1f);
         cueArrow = Make("CueArrow", ProcSprites.Arrow, Color.clear, 45, 0.3f);
@@ -59,6 +59,7 @@ public class Hazard : MonoBehaviour
     public void InitAsteroid(float r, Vector2 vel)
     {
         Type = HazardType.Asteroid;
+        Codex.See(Codex.Hazard(Type));
         radius = r;
         velocity = vel;
         spin = Random.Range(-12f, 12f);
@@ -72,6 +73,7 @@ public class Hazard : MonoBehaviour
     {
         corePullMultiplier = Mathf.Max(1f, coreMultiplier);
         Type = HazardType.GravityWell;
+        Codex.See(Codex.Hazard(Type));
         radius = coreRadius;
         pullRadius = pullR;
         pullStrength = strength;
@@ -82,7 +84,16 @@ public class Hazard : MonoBehaviour
         for (int i = 0; i < swirl.Length; i++)
             swirl[i] = Make("Swirl" + i, ProcSprites.Ring, Color.clear, -14, 1f);
         coreGlow = Make("CoreGlow", ProcSprites.Glow, new Color(WellColor.r, WellColor.g, WellColor.b, 0.6f), 13, coreRadius * 4.5f);
-        Make("Core", ProcSprites.Ball, new Color(0.05f, 0.02f, 0.1f), 14, coreRadius * 2.1f);
+        // Black hole: a tilted accretion disk, a bright photon ring and a pitch-black core.
+        float tilt = Random.Range(-35f, 35f);
+        var diskGlow = Make("DiskGlow", ProcSprites.Glow, new Color(1f, 0.6f, 0.3f, 0.35f), 13, 1f).transform;
+        diskGlow.localScale = new Vector3(coreRadius * 7f, coreRadius * 1.8f, 1f);
+        diskGlow.localRotation = Quaternion.Euler(0f, 0f, tilt);
+        disk = Make("Disk", ProcSprites.Ring, new Color(1f, 0.75f, 0.45f, 0.7f), 13, 1f);
+        disk.transform.localScale = new Vector3(coreRadius * 4.6f, coreRadius * 1.3f, 1f);
+        disk.transform.localRotation = Quaternion.Euler(0f, 0f, tilt);
+        Make("PhotonRing", ProcSprites.Ring, new Color(1f, 0.9f, 0.75f, 0.85f), 15, coreRadius * 2.4f);
+        Make("Core", ProcSprites.Ball, Color.black, 14, coreRadius * 2.1f);
     }
 
     /// <summary>
@@ -97,6 +108,24 @@ public class Hazard : MonoBehaviour
     {
         float d = radius + r;
         return ((Vector2)transform.position - p).sqrMagnitude < d * d;
+    }
+
+    /// <summary>
+    /// Repel blast at 'from' (asteroids only): pushed away if the blast reaches its surface,
+    /// stronger when closer, divided by the rock's mass (bigger rocks are heavier).
+    /// </summary>
+    public void Repel(Vector2 from, float blastRadius, float force, float averageMass)
+    {
+        if (Type != HazardType.Asteroid) return;
+        Vector2 d = (Vector2)transform.position - from;
+        float dist = d.magnitude;
+        float gap = dist - radius;   // distance to the surface
+        if (gap > blastRadius) return;
+        Vector2 away = dist > 1e-3f ? d / dist : Vector2.up;
+        float falloff = 1f - 0.5f * Mathf.Clamp01(gap / Mathf.Max(0.01f, blastRadius));
+        float size = radius / 3.5f;   // 3.5 = an average asteroid
+        float mass = Mathf.Max(1f, averageMass * size * size);
+        velocity += away * force * falloff / mass;
     }
 
     /// <summary>Acceleration this hazard applies to something at p (zero for asteroids).</summary>
@@ -134,6 +163,7 @@ public class Hazard : MonoBehaviour
                 swirl[i].color = new Color(WellColor.r, WellColor.g, WellColor.b, 0.05f + 0.4f * k * (1f - k) * 2f);
             }
             coreGlow.color = new Color(WellColor.r, WellColor.g, WellColor.b, 0.45f + 0.2f * Mathf.Sin(age * 5f));
+            disk.color = new Color(1f, 0.75f, 0.45f, 0.55f + 0.2f * Mathf.Sin(age * 3.1f));
         }
 
         var pc = PendulumController.Instance;
@@ -141,7 +171,7 @@ public class Hazard : MonoBehaviour
         {
             if (Type == HazardType.GravityWell) pc.ApplyPull(this, dt);
             pc.HazardCircle(pos, radius, velocity, Type == HazardType.Asteroid ? RockColor : WellColor,
-                Type == HazardType.GravityWell ? 9f : 0f);
+                Type == HazardType.GravityWell ? 9f : 0f, Type == HazardType.GravityWell);
         }
 
         // Drifted far away and still leaving -> remove.

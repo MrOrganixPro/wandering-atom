@@ -5,26 +5,85 @@ using UnityEngine.UIElements;
 /// <summary>
 /// HUD and menus, built in code with UI Toolkit (no UXML / USS / PanelSettings assets needed).
 /// Everything is laid out in a 1280x720 reference space that scales with the screen height.
-/// Reads its data from GameManager every frame; the only thing it calls back is ChooseUpgrade.
+/// Visual first: counts are shown as rows of icons (pips), menus as big buttons with key hints.
+/// Reads its data from GameManager every frame and calls back through its public actions.
 /// Created by GameManager.
 /// </summary>
 [DefaultExecutionOrder(200)]
-public class GameUI : MonoBehaviour
+public partial class GameUI : MonoBehaviour
 {
-    static readonly Color Dim = new Color(1f, 1f, 1f, 0.7f);
+    public const string GameName = "WANDERING ATOM";
+
+    static readonly Color Dim = new Color(1f, 1f, 1f, 0.6f);
+    static readonly Color Faint = new Color(1f, 1f, 1f, 0.15f);
+    static readonly Color Panel = new Color(0.07f, 0.08f, 0.15f, 0.92f);
+    static readonly Color Ink = new Color(0.05f, 0.06f, 0.11f);
     static readonly Color CardGold = new Color(1f, 0.82f, 0.3f);
+    static readonly Color Danger = new Color(1f, 0.35f, 0.4f);
 
     GameManager gm;
     PanelSettings panelSettings;
     GameObject docObject;
     VisualElement root;
 
-    // HUD
-    VisualElement hud, shellsRow, heartsRow, speedBox, speedFill;
-    Label levelLabel, starsLabel, shellsLabel, coinsLabel, characterLabel, bestLabel, speedLabel;
+    // ------------------------------------------------------------ small widgets
 
-    // Recycler progress (rare upgrades): a partly filled icon that completes with each orb.
-    class Meter { public VisualElement row, clip; public Label label; public int shown = -1, shownMax = -1; }
+    /// <summary>A row of icons where the first 'filled' are lit (stars, coins, hearts...).</summary>
+    class Pips
+    {
+        public VisualElement row;
+        public Sprite sprite;
+        public float size, gap;
+        public readonly List<VisualElement> items = new List<VisualElement>();
+        int shownFilled = -1;
+        Color shownOn, shownOff;
+
+        public void Set(int count, int filled, Color on, Color off)
+        {
+            if (count != items.Count)
+            {
+                row.Clear();
+                items.Clear();
+                for (int i = 0; i < count; i++)
+                {
+                    var e = Icon(row, sprite, size, off);
+                    e.style.marginRight = gap;
+                    e.style.marginBottom = gap;
+                    items.Add(e);
+                }
+                shownFilled = -1;
+            }
+            if (filled == shownFilled && on == shownOn && off == shownOff) return;
+            shownFilled = filled;
+            shownOn = on;
+            shownOff = off;
+            for (int i = 0; i < items.Count; i++)
+                items[i].style.unityBackgroundImageTintColor = i < filled ? on : off;
+        }
+    }
+
+    class MenuButton
+    {
+        public VisualElement root;
+        public Label label;
+        public Color color;
+        public bool primary, hover;
+    }
+    readonly List<MenuButton> buttons = new List<MenuButton>();
+
+    /// <summary>Icons of everything the run owns (pause and game-over screens).</summary>
+    class Strip { public VisualElement row; public int sig = -1; }
+
+    // ------------------------------------------------------------------ HUD
+
+    VisualElement hud, shellsRow, speedBox, speedFill, pauseButton;
+    Label levelLabel, characterLabel;
+    Pips starPips, coinPips, heartPips;
+    int shownLevel = -1, shownShellSig = -1;
+    GameManager.Character shownCharacter = (GameManager.Character)(-1);
+
+    // Recycler progress (rare upgrades): an icon that fills up, plus a dot per orb.
+    class Meter { public VisualElement row, clip; public Pips dots; public int shown = -1, shownMax = -1; }
     Meter heartMeter, coinMeter;
 
     // Floating world-anchored texts ("ORBITALS FULL", recycling progress).
@@ -33,32 +92,28 @@ public class GameUI : MonoBehaviour
     class Floater { public Label label; public Vector2 world; public float age; }
     readonly List<Floater> floaters = new List<Floater>();
     const float FloatLife = 1.1f;
-    readonly List<VisualElement> hearts = new List<VisualElement>();
 
-    // Screens
+    // --------------------------------------------------------------- screens
+
     VisualElement titleScreen, introScreen, pauseScreen, completeScreen, gameOverScreen, upgradeScreen;
-    VisualElement completeBand, gameOverBand, cardRow;
-    Label titleStart, titleRestart, introLevel, introStars;
-    Label completeTitle, completeNext, gameOverTitle, gameOverInfo, gameOverRetry;
-    Label upgradeCounter, upgradeHint;
-    VisualElement upgradeCounterIcon;
+    Label titleName, titleBest, introLevel, completeTitle, completeSub, gameOverLevel, gameOverBest;
+    VisualElement titleAccent, quitButtonRoot, gameOverButtons, newRunColumn;
+    Pips introStars, completeCoins, gameOverStars, upgradePicks;
+    MenuButton retryButton;
+    Strip pauseStrip, gameOverStrip;
 
     class Card
     {
-        public VisualElement root, inner, sealedPart, openPart, flash;
+        public VisualElement root, inner, sealedPart, openPart, flash, nextPip;
         public Label bigQuestion;
         public Color color;
         public bool hover, mystery, rare;
         public VisualElement ribbon, shimmer;
     }
     readonly List<Card> cards = new List<Card>();
+    VisualElement cardRow;
     int builtOffer = -1;
     bool revealPending;   // a Character box is sealed: play the reveal sound when it opens
-
-    // Change detection so text isn't rebuilt every frame.
-    int shownLevel = -1, shownStars = -1, shownNeeded = -1, shownCoins = -1, shownCoinMax = -1, shownBest = -1;
-    int shownShellSig = -1, shownSpeed = -1, shownLives = -1;
-    GameManager.Character shownCharacter = (GameManager.Character)(-1);
 
     // ------------------------------------------------------------------ setup
 
@@ -72,7 +127,7 @@ public class GameUI : MonoBehaviour
         panelSettings.scaleMode = PanelScaleMode.ScaleWithScreenSize;
         panelSettings.referenceResolution = new Vector2Int(1280, 720);
         panelSettings.screenMatchMode = PanelScreenMatchMode.MatchWidthOrHeight;
-        panelSettings.match = 1f;   // scale with height, like the old OnGUI HUD
+        panelSettings.match = 1f;   // scale with height
         panelSettings.sortingOrder = 100;
         // Assets/Resources/GameUITheme.tss just imports Unity's default runtime theme.
         var theme = Resources.Load<ThemeStyleSheet>("GameUITheme");
@@ -90,6 +145,23 @@ public class GameUI : MonoBehaviour
         root.pickingMode = PickingMode.Ignore;
         root.style.unityFontDefinition = FontDefinition.FromFont(Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"));
 
+        BuildAll();
+        Loc.Changed += BuildAll;
+    }
+
+    /// <summary>(Re)builds every screen; also used when the language changes.</summary>
+    void BuildAll()
+    {
+        root.Clear();
+        buttons.Clear();
+        cards.Clear();
+        floaters.Clear();
+        builtOffer = -1;
+        shownLevel = -1;
+        shownShellSig = -1;
+        shownCharacter = (GameManager.Character)(-1);
+        shownElement = -999;
+
         BuildHud();
         BuildTitle();
         BuildIntro();
@@ -97,10 +169,12 @@ public class GameUI : MonoBehaviour
         BuildComplete();
         BuildGameOver();
         BuildUpgrade();
+        BuildIndex();
     }
 
     void OnDestroy()
     {
+        Loc.Changed -= BuildAll;
         if (docObject != null) Destroy(docObject);
         if (panelSettings != null) Destroy(panelSettings);
     }
@@ -131,15 +205,14 @@ public class GameUI : MonoBehaviour
         return e;
     }
 
-    /// <summary>Full-width horizontal dark band (top and height in % of the screen).</summary>
-    static VisualElement Band(VisualElement parent, float topPct, float heightPct, float alpha)
+    /// <summary>Full-width column whose top sits at topPct% of the screen; children are centered.</summary>
+    static VisualElement Column(VisualElement parent, float topPct)
     {
         var e = Box(parent);
         e.style.position = Position.Absolute;
         e.style.left = e.style.right = 0;
         e.style.top = Length.Percent(topPct);
-        e.style.height = Length.Percent(heightPct);
-        e.style.backgroundColor = new Color(0f, 0f, 0f, alpha);
+        e.style.alignItems = Align.Center;
         return e;
     }
 
@@ -159,18 +232,6 @@ public class GameUI : MonoBehaviour
         return l;
     }
 
-    /// <summary>Full-width centered line at topPct% of the screen, pushed down by offset (reference px).</summary>
-    static Label Line(VisualElement parent, string text, float topPct, float offset, float height, float size, bool bold, Color color)
-    {
-        var l = Text(parent, text, size, bold, color);
-        l.style.position = Position.Absolute;
-        l.style.left = l.style.right = 0;
-        l.style.top = Length.Percent(topPct);
-        l.style.marginTop = offset;
-        l.style.height = height;
-        return l;
-    }
-
     static VisualElement Icon(VisualElement parent, Sprite sprite, float size, Color tint)
     {
         var e = Box(parent);
@@ -181,10 +242,25 @@ public class GameUI : MonoBehaviour
         return e;
     }
 
+    static Pips MakePips(VisualElement parent, Sprite sprite, float size, float gap, float maxWidth = 0f)
+    {
+        var p = new Pips { row = Row(parent), sprite = sprite, size = size, gap = gap };
+        p.row.style.flexWrap = Wrap.Wrap;
+        p.row.style.justifyContent = Justify.Center;
+        if (maxWidth > 0f) p.row.style.maxWidth = maxWidth;
+        return p;
+    }
+
     static void Border(VisualElement e, float width, Color c)
     {
         e.style.borderLeftWidth = e.style.borderRightWidth = e.style.borderTopWidth = e.style.borderBottomWidth = width;
         e.style.borderLeftColor = e.style.borderRightColor = e.style.borderTopColor = e.style.borderBottomColor = c;
+    }
+
+    static void Radius(VisualElement e, float r)
+    {
+        e.style.borderTopLeftRadius = e.style.borderTopRightRadius = r;
+        e.style.borderBottomLeftRadius = e.style.borderBottomRightRadius = r;
     }
 
     static void Show(VisualElement e, bool on) => e.style.display = on ? DisplayStyle.Flex : DisplayStyle.None;
@@ -193,151 +269,378 @@ public class GameUI : MonoBehaviour
 
     static float Blink => 0.55f + 0.45f * Mathf.Sin(Time.unscaledTime * 4f);
 
+    /// <summary>A keyboard key drawn as a little keycap.</summary>
+    static VisualElement Keycap(VisualElement parent, string key, float size = 26f, Color? color = null)
+    {
+        Color c = color ?? Dim;
+        var e = Box(parent);
+        e.style.minWidth = size;
+        e.style.height = size;
+        e.style.paddingLeft = e.style.paddingRight = size * 0.25f;
+        e.style.justifyContent = Justify.Center;
+        e.style.flexShrink = 0;
+        Border(e, 1.5f, WithAlpha(c, c.a * 0.8f));
+        e.style.borderBottomWidth = 3f;
+        Radius(e, size * 0.2f);
+        var l = Text(e, key, size * 0.5f, true, c);
+        l.style.textShadow = new TextShadow { color = Color.clear };
+        return e;
+    }
+
+    /// <summary>Big clickable menu button: icon, label and the keyboard key that does the same.</summary>
+    MenuButton Button(VisualElement parent, Sprite icon, string label, string key, Color color, bool primary, System.Action onClick)
+    {
+        var b = new MenuButton { color = color, primary = primary };
+        var e = new VisualElement { pickingMode = PickingMode.Position };
+        e.style.flexDirection = FlexDirection.Row;
+        e.style.alignItems = Align.Center;
+        e.style.justifyContent = Justify.Center;
+        e.style.height = primary ? 66 : 54;
+        e.style.minWidth = primary ? 280 : 230;
+        e.style.paddingLeft = e.style.paddingRight = 22;
+        e.style.marginTop = e.style.marginBottom = 7;
+        e.style.marginLeft = e.style.marginRight = 10;
+        Radius(e, 12);
+        Border(e, 2.5f, color);
+        Color fg = primary ? Ink : color;
+        if (icon != null) Icon(e, icon, primary ? 30 : 24, fg).style.marginRight = 12;
+        b.label = Text(e, label, primary ? 28 : 22, true, fg);
+        if (primary) b.label.style.textShadow = new TextShadow { color = Color.clear };
+        if (key != null) Keycap(e, key, 24, WithAlpha(fg, 0.75f)).style.marginLeft = 16;
+        e.RegisterCallback<PointerEnterEvent>(_ => b.hover = true);
+        e.RegisterCallback<PointerLeaveEvent>(_ => b.hover = false);
+        e.RegisterCallback<PointerDownEvent>(ev => { if (ev.button == 0) onClick(); });
+        parent.Add(e);
+        b.root = e;
+        buttons.Add(b);
+        return b;
+    }
+
+    void UpdateButtons()
+    {
+        foreach (var b in buttons)
+        {
+            if (b.root.resolvedStyle.display == DisplayStyle.None) { b.hover = false; continue; }
+            Color bg = b.primary ? WithAlpha(Color.Lerp(b.color, Color.white, b.hover ? 0.25f : 0f), 0.95f)
+                                 : (b.hover ? WithAlpha(b.color, 0.25f) : WithAlpha(Panel, 0.85f));
+            b.root.style.backgroundColor = bg;
+            float s = b.hover ? 1.05f : 1f;
+            b.root.style.scale = new Scale(new Vector3(s, s, 1f));
+        }
+    }
+
+    Strip MakeStrip(VisualElement parent)
+    {
+        var s = new Strip { row = Row(parent) };
+        s.row.style.flexWrap = Wrap.Wrap;
+        s.row.style.justifyContent = Justify.Center;
+        s.row.style.maxWidth = 560;
+        return s;
+    }
+
+    void UpdateStrip(Strip s)
+    {
+        var types = (GameManager.UpgradeType[])System.Enum.GetValues(typeof(GameManager.UpgradeType));
+        int sig = 17;
+        foreach (var u in types) sig = sig * 31 + gm.OwnedCount(u);
+        if (sig == s.sig) return;
+        s.sig = sig;
+        s.row.Clear();
+        // Character first, then everything else in card order.
+        foreach (var u in types) if (GameManager.IsCharacter(u)) AddStripTile(s.row, u);
+        foreach (var u in types) if (!GameManager.IsCharacter(u)) AddStripTile(s.row, u);
+    }
+
+    void AddStripTile(VisualElement row, GameManager.UpgradeType u)
+    {
+        int n = gm.OwnedCount(u);
+        if (n <= 0) return;
+        Color c = GameManager.UpgradeColor(u);
+        var tile = Box(row);
+        tile.style.width = tile.style.height = 40;
+        tile.style.marginLeft = tile.style.marginRight = tile.style.marginTop = tile.style.marginBottom = 3;
+        tile.style.alignItems = Align.Center;
+        tile.style.justifyContent = Justify.Center;
+        tile.style.backgroundColor = WithAlpha(c, 0.14f);
+        Border(tile, GameManager.IsCharacter(u) ? 2f : 1f, WithAlpha(c, GameManager.IsCharacter(u) ? 0.9f : 0.45f));
+        Radius(tile, 8);
+        Icon(tile, IconFor(u), 26, c);
+        if (n > 1)
+        {
+            var count = Text(tile, n.ToString(), 13, true, Color.white);
+            count.style.position = Position.Absolute;
+            count.style.right = 3;
+            count.style.bottom = 1;
+        }
+    }
+
     // ------------------------------------------------------------------ build
 
     void BuildHud()
     {
         hud = Layer(root);
 
-        // Top-left: level, stars, balls per shell (and turrets), coins, character.
+        // Top-left: level, stars, orbs per orbit (and turrets), coins, recyclers, character.
         var left = Box(hud);
         left.style.position = Position.Absolute;
         left.style.left = 24;
-        left.style.top = 14;
-        levelLabel = Text(left, "", 34, true, Color.white, TextAnchor.UpperLeft);
-        levelLabel.style.height = 46;
+        left.style.top = 16;
+        left.style.alignItems = Align.FlexStart;
+        levelLabel = Text(left, "", 30, true, Color.white, TextAnchor.UpperLeft);
+        levelLabel.style.height = 40;
 
-        var starRow = Row(left);
-        starRow.style.height = 36;
-        Icon(starRow, ProcSprites.Star, 30, Pickup.Gold);
-        starsLabel = Text(starRow, "", 24, true, Pickup.Gold, TextAnchor.MiddleLeft);
-        starsLabel.style.marginLeft = 6;
+        starPips = MakePips(left, ProcSprites.Photon, 26, 3, 340);
+        starPips.row.style.justifyContent = Justify.FlexStart;
 
         shellsRow = Row(left);
-        shellsRow.style.height = 30;
-        Icon(shellsRow, ProcSprites.Ball, 24, Pickup.OrbColor).style.marginLeft = 3;
-        shellsLabel = Text(shellsRow, "", 18, false, Pickup.OrbColor, TextAnchor.MiddleLeft);
-        shellsLabel.style.marginLeft = 9;
+        shellsRow.style.minHeight = 22;
+        shellsRow.style.marginTop = 4;
 
-        var coinRow = Row(left);
-        coinRow.style.height = 30;
-        Icon(coinRow, ProcSprites.Coin, 24, Pickup.CoinColor).style.marginLeft = 3;
-        coinsLabel = Text(coinRow, "", 18, false, Pickup.CoinColor, TextAnchor.MiddleLeft);
-        coinsLabel.style.marginLeft = 9;
+        coinPips = MakePips(left, ProcSprites.Quanta, 20, 4, 340);
+        coinPips.row.style.justifyContent = Justify.FlexStart;
+        coinPips.row.style.marginTop = 6;
 
-        heartMeter = MakeMeter(left, ProcSprites.Heart, Pickup.HeartColor);
-        coinMeter = MakeMeter(left, ProcSprites.Coin, Pickup.CoinColor);
+        heartMeter = MakeMeter(left, ProcSprites.Stability, Pickup.HeartColor);
+        coinMeter = MakeMeter(left, ProcSprites.Quanta, Pickup.CoinColor);
 
-        characterLabel = Text(left, "", 18, false, Color.white, TextAnchor.MiddleLeft);
-        characterLabel.style.height = 26;
-        characterLabel.style.marginLeft = 3;
+        characterLabel = Text(left, "", 16, true, Color.white, TextAnchor.MiddleLeft);
+        characterLabel.style.marginTop = 6;
+        characterLabel.style.letterSpacing = 2;
+
+        BuildElementTile();
 
         floatLayer = Layer(hud);
 
-        // Top-right: best level and health.
-        var right = Box(hud);
+        // Top-right: health, then the pause button.
+        var right = Row(hud);
         right.style.position = Position.Absolute;
-        right.style.right = 24;
-        right.style.top = 20;
-        right.style.alignItems = Align.FlexEnd;
-        bestLabel = Text(right, "", 18, false, Dim, TextAnchor.UpperRight);
-        heartsRow = Row(right);
-        heartsRow.style.marginTop = 10;
+        right.style.right = 20;
+        right.style.top = 18;
+        heartPips = MakePips(right, ProcSprites.Stability, 30, 5);
+        heartPips.row.style.flexWrap = Wrap.NoWrap;
 
-        // Bottom-middle: faint speed readout (kept faint so it doesn't hide warnings).
+        pauseButton = new VisualElement { pickingMode = PickingMode.Position };
+        pauseButton.style.width = pauseButton.style.height = 40;
+        pauseButton.style.marginLeft = 14;
+        pauseButton.style.marginTop = -4;
+        pauseButton.style.flexDirection = FlexDirection.Row;
+        pauseButton.style.justifyContent = Justify.Center;
+        pauseButton.style.alignItems = Align.Center;
+        Radius(pauseButton, 8);
+        Border(pauseButton, 1.5f, WithAlpha(Color.white, 0.35f));
+        pauseButton.style.backgroundColor = WithAlpha(Panel, 0.5f);
+        for (int i = 0; i < 2; i++)
+        {
+            var bar = Box(pauseButton);
+            bar.style.width = 5;
+            bar.style.height = 16;
+            bar.style.marginLeft = bar.style.marginRight = 3;
+            bar.style.backgroundColor = WithAlpha(Color.white, 0.8f);
+            Radius(bar, 1.5f);
+        }
+        pauseButton.RegisterCallback<PointerDownEvent>(ev => { if (ev.button == 0) gm.Pause(); });
+        right.Add(pauseButton);
+
+        // Bottom-middle: faint speed bar (kept faint so it doesn't hide warnings).
         speedBox = Box(hud);
         speedBox.style.position = Position.Absolute;
         speedBox.style.left = speedBox.style.right = 0;
-        speedBox.style.bottom = 18;
+        speedBox.style.bottom = 20;
         speedBox.style.alignItems = Align.Center;
-        speedLabel = Text(speedBox, "", 14, false, new Color(1f, 1f, 1f, 0.35f));
-        speedLabel.style.height = 24;
-        var bar = Box(speedBox);
-        bar.style.width = 140;
-        bar.style.height = 4;
-        bar.style.backgroundColor = new Color(1f, 1f, 1f, 0.1f);
-        speedFill = Box(bar);
+        var bar2 = Box(speedBox);
+        bar2.style.width = 160;
+        bar2.style.height = 5;
+        bar2.style.backgroundColor = new Color(1f, 1f, 1f, 0.1f);
+        Radius(bar2, 2.5f);
+        bar2.style.overflow = Overflow.Hidden;
+        speedFill = Box(bar2);
         speedFill.style.height = Length.Percent(100);
-        speedFill.style.backgroundColor = new Color(1f, 0.75f, 0.4f, 0.35f);
+        speedFill.style.backgroundColor = new Color(1f, 0.75f, 0.4f, 0.4f);
     }
 
     void BuildTitle()
     {
         titleScreen = Layer(root);
-        Band(titleScreen, 14f, 72f, 0.35f);
-        Line(titleScreen, "PENDULUM", 18f, 0f, 90f, 72f, true, Pickup.OrbColor);
-        Line(titleScreen, "You are the thruster. Collect the stars, survive the swarm.", 18f, 80f, 30f, 18f, false, Dim);
-        Line(titleScreen, "Drag from the thruster  /  WASD  /  Arrow keys   —  fly", 40f, 0f, 30f, 18f, false, Color.white);
-        Line(titleScreen, "Blue orbs add orbiting balls (shells of 2, then 8)  •  each ball blocks one enemy", 40f, 30f, 30f, 18f, false, Color.white);
-        Line(titleScreen, "Enemies that reach the thruster cost a heart  •  coins buy upgrades after each level", 40f, 60f, 30f, 18f, false, Dim);
-        Line(titleScreen, "Esc / P  —  pause", 40f, 90f, 30f, 18f, false, Dim);
-        titleStart = Line(titleScreen, "", 70f, 0f, 40f, 24f, true, Color.white);
-        titleRestart = Line(titleScreen, "Press 1 to start over from Level 1 (resets upgrades)", 70f, 40f, 30f, 18f, false, Dim);
+        titleScreen.style.backgroundColor = new Color(0f, 0f, 0.02f, 0.35f);
+
+        var col = Column(titleScreen, 17f);
+        titleName = Text(col, GameName, 88, true, Pickup.OrbColor);
+        titleName.style.letterSpacing = 10;
+        titleAccent = Box(col);
+        titleAccent.style.height = 3;
+        titleAccent.style.width = 420;
+        titleAccent.style.marginTop = 6;
+        titleAccent.style.backgroundColor = WithAlpha(Pickup.OrbColor, 0.6f);
+        Radius(titleAccent, 1.5f);
+        titleBest = Text(col, "", 18, true, Dim);
+        titleBest.style.marginTop = 12;
+        titleBest.style.letterSpacing = 3;
+
+        var buttonsCol = Column(titleScreen, 50f);
+        Button(buttonsCol, ProcSprites.Arrow, Loc.T("PLAY", "OYNA"), Loc.T("SPACE", "BOŞLUK"), Pickup.OrbColor, true, () => gm.NewRun());
+        Button(buttonsCol, ProcSprites.Photon, Loc.T("INDEX", "DİZİN"), "I", Pickup.Gold, false, () => OpenIndex());
+        quitButtonRoot = Button(buttonsCol, null, Loc.T("QUIT", "ÇIKIŞ"), null, Dim, false, () => gm.QuitApp()).root;
+
+        // Top-right: language switch.
+        var langs = Row(titleScreen);
+        langs.style.position = Position.Absolute;
+        langs.style.right = 24;
+        langs.style.top = 20;
+        LanguageChip(langs, Language.English, "EN");
+        LanguageChip(langs, Language.Turkish, "TR");
+        Show(quitButtonRoot, GameManager.CanQuitApp);
+
+        // Bottom: controls and what things do, as icons and keys.
+        var legend = Row(titleScreen);
+        legend.style.position = Position.Absolute;
+        legend.style.left = legend.style.right = 0;
+        legend.style.bottom = Length.Percent(7);
+        legend.style.justifyContent = Justify.Center;
+
+        var move = LegendGroup(legend);
+        foreach (var k in new[] { "W", "A", "S", "D" }) Keycap(move, k).style.marginRight = 3;
+        LegendWord(move, Loc.T("/ drag  fly", "/ sürükle  uç"));
+
+        var pause = LegendGroup(legend);
+        Keycap(pause, "ESC");
+        LegendWord(pause, Loc.T("pause", "duraklat"));
+
+        var star = LegendGroup(legend);
+        Icon(star, ProcSprites.Photon, 26, Pickup.Gold);
+        LegendWord(star, Loc.T("photons: next level", "foton: sonraki seviye"));
+
+        var orb = LegendGroup(legend);
+        Icon(orb, ProcSprites.Electron, 24, Pickup.OrbColor);
+        LegendWord(orb, Loc.T("electrons: shield", "elektron: kalkan"));
+
+        var coin = LegendGroup(legend);
+        Icon(coin, ProcSprites.Quanta, 22, Pickup.CoinColor);
+        LegendWord(coin, Loc.T("quanta: upgrades", "kuanta: geliştirme"));
+    }
+
+    /// <summary>Small EN / TR toggle; the active one is filled.</summary>
+    void LanguageChip(VisualElement parent, Language lang, string code)
+    {
+        bool on = Loc.Current == lang;
+        var e = new VisualElement { pickingMode = PickingMode.Position };
+        e.style.width = 52;
+        e.style.height = 34;
+        e.style.marginLeft = 6;
+        e.style.justifyContent = Justify.Center;
+        Radius(e, 8);
+        Border(e, 2f, on ? Pickup.OrbColor : WithAlpha(Color.white, 0.3f));
+        e.style.backgroundColor = on ? WithAlpha(Pickup.OrbColor, 0.9f) : WithAlpha(Panel, 0.7f);
+        var l = Text(e, code, 17, true, on ? Ink : Dim);
+        l.style.textShadow = new TextShadow { color = Color.clear };
+        e.RegisterCallback<PointerDownEvent>(ev => { if (ev.button == 0) Loc.Current = lang; });
+        parent.Add(e);
+    }
+
+    static VisualElement LegendGroup(VisualElement parent)
+    {
+        var g = Row(parent);
+        g.style.marginLeft = g.style.marginRight = 18;
+        return g;
+    }
+
+    static void LegendWord(VisualElement parent, string word)
+    {
+        Text(parent, word, 17, false, Dim).style.marginLeft = 8;
     }
 
     void BuildIntro()
     {
         introScreen = Layer(root);
-        introLevel = Line(introScreen, "", 24f, 0f, 90f, 72f, true, Color.white);
-        introStars = Line(introScreen, "", 24f, 80f, 40f, 24f, true, Pickup.Gold);
+        var col = Column(introScreen, 26f);
+        introLevel = Text(col, "", 72, true, Color.white);
+        introLevel.style.letterSpacing = 6;
+        introStars = MakePips(col, ProcSprites.Photon, 34, 6, 700);
+        introStars.row.style.marginTop = 10;
     }
 
     void BuildPause()
     {
         pauseScreen = Layer(root);
-        pauseScreen.style.backgroundColor = new Color(0f, 0f, 0f, 0.45f);
-        Line(pauseScreen, "PAUSED", 38f, 0f, 90f, 72f, true, Color.white);
-        Line(pauseScreen, "Esc / Space to resume   •   R to restart level", 38f, 90f, 30f, 18f, false, Dim);
+        pauseScreen.style.backgroundColor = new Color(0f, 0f, 0.02f, 0.6f);
+        var col = Column(pauseScreen, 16f);
+        var title = Text(col, Loc.T("PAUSED", "DURAKLATILDI"), 64, true, Color.white);
+        title.style.letterSpacing = 8;
+        pauseStrip = MakeStrip(col);
+        pauseStrip.row.style.marginTop = 14;
+        pauseStrip.row.style.minHeight = 46;
+
+        var buttonsCol = Column(pauseScreen, 50f);
+        Button(buttonsCol, ProcSprites.Arrow, Loc.T("RESUME", "DEVAM"), "ESC", Pickup.OrbColor, true, () => gm.Resume());
+        Button(buttonsCol, ProcSprites.TurnArrow, Loc.T("RESTART", "YENİDEN"), "R", Color.white, false, () => gm.RetryLevel());
+        Button(buttonsCol, ProcSprites.Photon, Loc.T("INDEX", "DİZİN"), "I", Pickup.Gold, false, () => OpenIndex());
+        Button(buttonsCol, null, Loc.T("MENU", "MENÜ"), "M", Dim, false, () => gm.QuitToTitle());
     }
 
     void BuildComplete()
     {
         completeScreen = Layer(root);
-        completeBand = Band(completeScreen, 30f, 30f, 0.35f);
-        completeTitle = Line(completeScreen, "", 33f, 0f, 90f, 72f, true, Pickup.Gold);
-        completeNext = Line(completeScreen, "", 33f, 90f, 40f, 24f, true, Color.white);
+        var col = Column(completeScreen, 30f);
+        completeTitle = Text(col, "", 72, true, Pickup.Gold);
+        completeTitle.style.letterSpacing = 6;
+        completeSub = Text(col, Loc.T("COMPLETE", "TAMAMLANDI"), 26, true, Color.white);
+        completeSub.style.letterSpacing = 12;
+        completeCoins = MakePips(col, ProcSprites.Quanta, 34, 8, 700);
+        completeCoins.row.style.marginTop = 20;
     }
 
     void BuildGameOver()
     {
         gameOverScreen = Layer(root);
-        gameOverBand = Band(gameOverScreen, 25f, 50f, 0.45f);
-        gameOverTitle = Line(gameOverScreen, "GAME OVER", 29f, 0f, 90f, 72f, true, new Color(1f, 0.35f, 0.4f));
-        gameOverInfo = Line(gameOverScreen, "", 29f, 90f, 40f, 24f, true, Color.white);
-        gameOverRetry = Line(gameOverScreen, "Press SPACE, R or Click to retry the level", 62f, 0f, 40f, 24f, true, Color.white);
+        var col = Column(gameOverScreen, 14f);
+        var title = Text(col, Loc.T("GAME OVER", "OYUN BİTTİ"), 72, true, Danger);
+        title.style.letterSpacing = 6;
+        gameOverLevel = Text(col, "", 28, true, Color.white);
+        gameOverLevel.style.marginTop = 6;
+        gameOverLevel.style.letterSpacing = 4;
+        gameOverStars = MakePips(col, ProcSprites.Photon, 24, 4, 600);
+        gameOverStars.row.style.marginTop = 8;
+        gameOverBest = Text(col, "", 16, true, Dim);
+        gameOverBest.style.marginTop = 8;
+        gameOverBest.style.letterSpacing = 3;
+
+        // Two choices: replay this level with the run's upgrades, or a fresh run from level 1.
+        gameOverButtons = Row(gameOverScreen);
+        gameOverButtons.style.position = Position.Absolute;
+        gameOverButtons.style.left = gameOverButtons.style.right = 0;
+        gameOverButtons.style.top = Length.Percent(52);
+        gameOverButtons.style.justifyContent = Justify.Center;
+        gameOverButtons.style.alignItems = Align.FlexStart;
+
+        var retryCol = Box(gameOverButtons);
+        retryCol.style.alignItems = Align.Center;
+        retryCol.style.marginLeft = retryCol.style.marginRight = 16;
+        retryButton = Button(retryCol, ProcSprites.TurnArrow, "", "R", Pickup.OrbColor, true, () => gm.RetryLevel());
+        gameOverStrip = MakeStrip(retryCol);
+        gameOverStrip.row.style.maxWidth = 340;
+        gameOverStrip.row.style.marginTop = 4;
+
+        newRunColumn = Box(gameOverButtons);
+        newRunColumn.style.alignItems = Align.Center;
+        newRunColumn.style.marginLeft = newRunColumn.style.marginRight = 16;
+        Button(newRunColumn, ProcSprites.Arrow, Loc.T("LEVEL 1", "SEVİYE 1"), "N", Color.white, false, () => gm.NewRun()).root.style.marginTop = 13;
+        Text(newRunColumn, Loc.T("new run", "yeni oyun"), 15, false, Dim).style.marginTop = 4;
     }
 
     void BuildUpgrade()
     {
         upgradeScreen = Layer(root);
-        upgradeScreen.style.backgroundColor = new Color(0f, 0f, 0f, 0.55f);
-        Line(upgradeScreen, "CHOOSE AN UPGRADE", 14f, 0f, 60f, 34f, true, Color.white);
+        upgradeScreen.style.backgroundColor = new Color(0f, 0f, 0.02f, 0.6f);
 
-        var counter = Row(upgradeScreen);
-        counter.style.position = Position.Absolute;
-        counter.style.left = counter.style.right = 0;
-        counter.style.top = Length.Percent(14);
-        counter.style.marginTop = 60;
-        counter.style.height = 30;
-        counter.style.justifyContent = Justify.Center;
-        upgradeCounterIcon = Icon(counter, ProcSprites.Coin, 22, Pickup.CoinColor);
-        upgradeCounter = Text(counter, "", 18, false, Pickup.CoinColor, TextAnchor.MiddleLeft);
-        upgradeCounter.style.marginLeft = 6;
+        // Picks left: one coin per pick (refund picks use the character's color).
+        var top = Column(upgradeScreen, 16f);
+        upgradePicks = MakePips(top, ProcSprites.Quanta, 34, 8, 700);
 
-        var column = Box(upgradeScreen);
-        column.style.position = Position.Absolute;
-        column.style.left = column.style.right = 0;
-        column.style.top = Length.Percent(36);
-        column.style.alignItems = Align.Center;
-
+        var column = Column(upgradeScreen, 31f);
         cardRow = Row(column);
         cardRow.style.alignItems = Align.Stretch;
         cardRow.style.justifyContent = Justify.Center;
         cardRow.style.paddingLeft = cardRow.style.paddingRight = 20;
         cardRow.style.alignSelf = Align.Stretch;
-
-        upgradeHint = Text(column, "", 18, false, Dim);
-        upgradeHint.style.marginTop = 24;
     }
 
     // ----------------------------------------------------------------- cards
@@ -359,10 +662,6 @@ public class GameUI : MonoBehaviour
             cards.Add(i == gm.MysteryIndex ? MakeMysteryCard(i, offer[i])
                     : GameManager.IsRare(offer[i]) ? MakeRareCard(i, offer[i])
                     : MakeCard(i, offer[i]));
-
-        string keys = "";
-        for (int i = 0; i < offer.Count; i++) keys += (i > 0 ? " / " : "") + (i + 1);
-        upgradeHint.text = "Click a card or press " + keys;
     }
 
     /// <summary>Seconds until a Character box opens (shared by the animation and the sounds).</summary>
@@ -373,10 +672,11 @@ public class GameUI : MonoBehaviour
         var card = new Card();
         var e = new VisualElement { pickingMode = PickingMode.Position };
         e.style.width = 220;
-        e.style.minHeight = 230;
+        e.style.minHeight = 250;
         e.style.flexShrink = 1;
-        e.style.marginLeft = e.style.marginRight = 8;
+        e.style.marginLeft = e.style.marginRight = 10;
         e.style.alignItems = Align.Center;
+        Radius(e, 10);
         e.RegisterCallback<PointerEnterEvent>(_ => card.hover = true);
         e.RegisterCallback<PointerLeaveEvent>(_ => card.hover = false);
         e.RegisterCallback<PointerDownEvent>(ev =>
@@ -388,27 +688,48 @@ public class GameUI : MonoBehaviour
         return card;
     }
 
+    /// <summary>Icon, title, a short line or two, level pips and the key that picks it.</summary>
+    void CardFace(Card card, VisualElement parent, int index, GameManager.UpgradeType u, float iconTop)
+    {
+        var icon = Icon(parent, IconFor(u), 56, card.color);
+        icon.style.marginTop = iconTop;
+        var title = Text(parent, GameManager.UpgradeTitle(u), 20, true, card.color, TextAnchor.MiddleCenter, true);
+        title.style.marginTop = 10;
+        title.style.minHeight = 30;
+        var desc = Text(parent, gm.UpgradeDescription(u), 16, false, Color.white, TextAnchor.UpperCenter, true);
+        desc.style.marginTop = 2;
+        desc.style.flexGrow = 1;
+
+        if (gm.UpgradeLevels(u, out int owned, out int cap))
+        {
+            // Filled = owned, blinking = this pick, hollow = still to come (no limit: just owned + 1).
+            int total = cap < 0 ? Mathf.Min(owned + 1, 12) : cap;
+            var pips = Row(parent);
+            pips.style.marginTop = 8;
+            pips.style.marginBottom = 4;
+            for (int i = 0; i < total; i++)
+            {
+                var dot = Icon(pips, ProcSprites.Ball, 11, i < owned ? card.color : Faint);
+                dot.style.marginLeft = dot.style.marginRight = 2;
+                if (i == owned) card.nextPip = dot;
+            }
+        }
+        var key = Keycap(parent, (index + 1).ToString(), 26);
+        key.style.marginTop = 6;
+        key.style.marginBottom = 4;
+    }
+
     Card MakeCard(int index, GameManager.UpgradeType u)
     {
         Card card = NewCardShell(index);
         card.color = GameManager.UpgradeColor(u);
         VisualElement e = card.root;
-        e.style.paddingTop = 16;
         e.style.paddingLeft = e.style.paddingRight = 10;
         e.style.paddingBottom = 6;
-        Border(e, 3f, Color.clear);
+        Border(e, 2f, Color.clear);
         e.style.borderTopWidth = 6;
         e.style.borderTopColor = card.color;
-
-        Icon(e, IconFor(u), 48, card.color);
-
-        var title = Text(e, GameManager.UpgradeTitle(u), 20, true, card.color, TextAnchor.MiddleCenter, true);
-        title.style.marginTop = 10;
-        title.style.minHeight = 34;
-        var desc = Text(e, gm.UpgradeDescription(u), 16, false, Color.white, TextAnchor.UpperCenter, true);
-        desc.style.marginTop = 4;
-        desc.style.flexGrow = 1;
-        Text(e, "[" + (index + 1) + "]", 18, false, Dim).style.height = 24;
+        CardFace(card, e, index, u, 18);
         return card;
     }
 
@@ -419,16 +740,19 @@ public class GameUI : MonoBehaviour
             case GameManager.UpgradeType.Heal:
             case GameManager.UpgradeType.MaxHealth:
             case GameManager.UpgradeType.Regeneration:
-            case GameManager.UpgradeType.HealthRecycler: return ProcSprites.Heart;
-            case GameManager.UpgradeType.CoinRecycler: return ProcSprites.Coin;
+            case GameManager.UpgradeType.HealthRecycler: return ProcSprites.Stability;
+            case GameManager.UpgradeType.CoinRecycler:
+            case GameManager.UpgradeType.Challenger: return ProcSprites.Quanta;
             case GameManager.UpgradeType.Insight: return ProcSprites.Asteroid(0);
             case GameManager.UpgradeType.BallArmor:
-            case GameManager.UpgradeType.BallSize: return ProcSprites.Ball;
-            case GameManager.UpgradeType.PickupRange: return ProcSprites.Star;
+            case GameManager.UpgradeType.BallSize:
+            case GameManager.UpgradeType.Sluggish: return ProcSprites.Ball;
+            case GameManager.UpgradeType.PickupRange: return ProcSprites.Photon;
             case GameManager.UpgradeType.Torque: return ProcSprites.TurnArrow;
             case GameManager.UpgradeType.Repel:
             case GameManager.UpgradeType.TurretRange: return ProcSprites.Ring;
-            case GameManager.UpgradeType.FireRate: return ProcSprites.Dart;
+            case GameManager.UpgradeType.FireRate:
+            case GameManager.UpgradeType.Spaceship: return ProcSprites.Trefoil;
             default: return ProcSprites.Arrow;
         }
     }
@@ -449,8 +773,6 @@ public class GameUI : MonoBehaviour
         e.style.backgroundColor = new Color(0.07f, 0.05f, 0.13f, 0.96f);
         Border(e, 3f, Color.white);
         e.style.borderTopWidth = 0;
-        e.style.borderTopLeftRadius = e.style.borderTopRightRadius = 10;
-        e.style.borderBottomLeftRadius = e.style.borderBottomRightRadius = 10;
 
         // Light sweep (drawn under the content).
         card.shimmer = Box(e);
@@ -467,19 +789,11 @@ public class GameUI : MonoBehaviour
         card.ribbon.style.marginLeft = card.ribbon.style.marginRight = -10;
         card.ribbon.style.height = 24;
         card.ribbon.style.justifyContent = Justify.Center;
-        var tag = Text(card.ribbon, "RARE", 15, true, new Color(0.08f, 0.05f, 0.12f));
+        var tag = Text(card.ribbon, Loc.T("RARE", "NADİR"), 15, true, new Color(0.08f, 0.05f, 0.12f));
         tag.style.letterSpacing = 6;
         tag.style.textShadow = new TextShadow { color = Color.clear };
 
-        var icon = Icon(e, IconFor(u), 48, card.color);
-        icon.style.marginTop = 12;
-        var title = Text(e, GameManager.UpgradeTitle(u), 20, true, card.color, TextAnchor.MiddleCenter, true);
-        title.style.marginTop = 8;
-        title.style.minHeight = 34;
-        var desc = Text(e, gm.UpgradeDescription(u), 16, false, Color.white, TextAnchor.UpperCenter, true);
-        desc.style.marginTop = 4;
-        desc.style.flexGrow = 1;
-        Text(e, "[" + (index + 1) + "]", 18, false, Dim).style.height = 24;
+        CardFace(card, e, index, u, 12);
         return card;
     }
 
@@ -496,6 +810,7 @@ public class GameUI : MonoBehaviour
         card.inner = Layer(e);
         card.inner.style.left = card.inner.style.right = card.inner.style.top = card.inner.style.bottom = 9;
         Border(card.inner, 1.5f, WithAlpha(CardGold, 0.45f));
+        Radius(card.inner, 6);
 
         // Revealed contents (in the layout flow so the card fits the text; hidden until open).
         card.openPart = Box(e);
@@ -503,26 +818,19 @@ public class GameUI : MonoBehaviour
         card.openPart.style.flexGrow = 1;
         card.openPart.style.paddingTop = 14;
         card.openPart.style.paddingLeft = card.openPart.style.paddingRight = 14;
-        card.openPart.style.paddingBottom = 12;
-        var tierTag = Text(card.openPart, "CHARACTER", 18, true, CardGold);
-        tierTag.style.height = 24;
+        card.openPart.style.paddingBottom = 10;
+        var tierTag = Text(card.openPart, Loc.T("CHARACTER", "KARAKTER"), 15, true, CardGold);
         tierTag.style.letterSpacing = 4;
-        var title = Text(card.openPart, GameManager.UpgradeTitle(u), 20, true, card.color, TextAnchor.MiddleCenter, true);
-        title.style.marginTop = 4;
-        title.style.minHeight = 34;
-        var desc = Text(card.openPart, gm.UpgradeDescription(u), 16, false, Color.white, TextAnchor.UpperCenter, true);
-        desc.style.marginTop = 6;
-        desc.style.flexGrow = 1;
-        var cost = Row(card.openPart);
+        CardFace(card, card.openPart, index, u, 8);
+        // Cost: two coins, placed above the key.
+        var cost = Row(null);
+        Icon(cost, ProcSprites.Quanta, 20, Pickup.CoinColor);
+        Icon(cost, ProcSprites.Quanta, 20, Pickup.CoinColor).style.marginLeft = 3;
         cost.style.marginTop = 6;
-        Icon(cost, ProcSprites.Coin, 20, Pickup.CoinColor);
-        Icon(cost, ProcSprites.Coin, 20, Pickup.CoinColor).style.marginLeft = -2;
-        Text(cost, "costs 2 coins", 18, false, Pickup.CoinColor, TextAnchor.MiddleLeft).style.marginLeft = 6;
-        Text(card.openPart, "[" + (index + 1) + "]", 18, false, Dim).style.height = 24;
+        card.openPart.Insert(card.openPart.childCount - 1, cost);
 
-        // Sealed box: lid seam, "? ? ?" and a big pulsing "?".
+        // Sealed box: lid seam and a big pulsing "?".
         card.sealedPart = Layer(e);
-        Text(card.sealedPart, "? ? ?", 18, false, WithAlpha(CardGold, 0.8f)).style.marginTop = 14;
         var seam = Box(card.sealedPart);
         seam.style.position = Position.Absolute;
         seam.style.left = seam.style.right = 0;
@@ -539,6 +847,7 @@ public class GameUI : MonoBehaviour
         card.flash = Layer(e);
         card.flash.style.backgroundColor = Color.white;
         card.flash.style.opacity = 0f;
+        Radius(card.flash, 10);
         return card;
     }
 
@@ -550,12 +859,16 @@ public class GameUI : MonoBehaviour
         if (revealPending && T >= R)
         {
             revealPending = false;
+            if (gm.MysteryIndex >= 0 && gm.MysteryIndex < gm.Offer.Count)
+                Codex.See(Codex.Upgrade(gm.Offer[gm.MysteryIndex]));
             Sfx.Play("reveal", 0.9f);
         }
         float ut = Time.unscaledTime;
         foreach (var card in cards)
         {
             VisualElement e = card.root;
+            if (card.nextPip != null)
+                card.nextPip.style.unityBackgroundImageTintColor = WithAlpha(card.color, 0.25f + 0.75f * Blink);
             if (card.rare)
             {
                 // Prismatic border + ribbon, gentle bob, light sweep every couple of seconds.
@@ -574,6 +887,7 @@ public class GameUI : MonoBehaviour
                 e.style.backgroundColor = new Color(0.08f, 0.09f, 0.16f, card.hover ? 0.98f : 0.9f);
                 Color side = card.hover ? card.color : Color.clear;
                 e.style.borderLeftColor = e.style.borderRightColor = e.style.borderBottomColor = side;
+                e.style.translate = new Translate(0f, card.hover ? -6f : 0f);
                 continue;
             }
 
@@ -617,52 +931,65 @@ public class GameUI : MonoBehaviour
         Show(upgradeScreen, st == GameManager.State.Upgrade);
 
         if (st != GameManager.State.Title) UpdateHud(st);
+        UpdateIndex(st);
+        UpdateButtons();
 
         switch (st)
         {
             case GameManager.State.Title:
-                titleStart.text = gm.SavedLevel > 1
-                    ? "Press SPACE or Click to continue  —  Level " + gm.SavedLevel
-                    : "Press SPACE or Click to start";
-                titleStart.style.color = new Color(1f, 1f, 1f, Blink);
-                Show(titleRestart, gm.SavedLevel > 1);
+            {
+                float ut = Time.unscaledTime;
+                titleName.style.translate = new Translate(0f, 4f * Mathf.Sin(ut * 1.3f));
+                titleName.style.color = Color.Lerp(Pickup.OrbColor, Color.white, 0.15f + 0.15f * Mathf.Sin(ut * 2f));
+                titleAccent.style.width = 380f + 60f * (0.5f + 0.5f * Mathf.Sin(ut * 1.3f));
+                titleBest.text = gm.BestLevel > 1 ? Loc.T("BEST  LEVEL ", "EN İYİ  SEVİYE ") + gm.BestLevel : "";
                 break;
+            }
 
             case GameManager.State.Playing:
                 if (gm.LevelTime < 2.5f)
                 {
                     float t = gm.LevelTime;
                     float a = Mathf.Clamp01(Mathf.Min(t / 0.3f, (2.5f - t) / 0.6f));
-                    introLevel.text = "LEVEL " + gm.Level;
-                    introStars.text = "Collect " + gm.StarsNeeded + " stars";
-                    introLevel.style.color = new Color(1f, 1f, 1f, a);
-                    introStars.style.color = WithAlpha(Pickup.Gold, a);
+                    introLevel.text = Loc.T("LEVEL ", "SEVİYE ") + gm.Level;
+                    introLevel.style.opacity = a;
+                    introStars.Set(gm.StarsNeeded, gm.StarsNeeded, Pickup.Gold, Pickup.Gold);
+                    introStars.row.style.opacity = a;
+                    float pop = 1f + 0.25f * Mathf.Clamp01(1f - t / 0.25f);
+                    introLevel.style.scale = new Scale(new Vector3(pop, pop, 1f));
                 }
+                break;
+
+            case GameManager.State.Paused:
+                UpdateStrip(pauseStrip);
                 break;
 
             case GameManager.State.LevelComplete:
             {
                 float a = Mathf.Clamp01(gm.StateTime / 0.3f);
-                completeBand.style.backgroundColor = new Color(0f, 0f, 0f, 0.35f * a);
-                completeTitle.text = "LEVEL " + gm.Level + " COMPLETE";
-                completeTitle.style.color = WithAlpha(Pickup.Gold, a);
+                completeScreen.style.backgroundColor = new Color(0f, 0f, 0.02f, 0.3f * a);
+                completeTitle.text = Loc.T("LEVEL ", "SEVİYE ") + gm.Level;
+                completeTitle.style.opacity = a;
+                completeSub.style.opacity = a;
                 int coins = gm.LevelCoins;
-                completeNext.text = coins > 0
-                    ? coins + (coins == 1 ? " coin" : " coins") + " to spend on upgrades"
-                    : "Next: Level " + (gm.Level + 1) + "  —  " + gm.NextLevelStars + " stars";
-                completeNext.style.color = new Color(1f, 1f, 1f, a);
+                // Coins pop in one by one.
+                int shown = Mathf.Clamp(Mathf.FloorToInt((gm.StateTime - 0.4f) / 0.25f) + 1, 0, coins);
+                completeCoins.Set(coins, shown, Pickup.CoinColor, Color.clear);
                 break;
             }
 
             case GameManager.State.GameOver:
             {
                 float a = Mathf.Clamp01(gm.StateTime / 0.5f);
-                gameOverBand.style.backgroundColor = new Color(0f, 0f, 0f, 0.45f * a);
-                gameOverTitle.style.opacity = a;
-                gameOverInfo.text = "Level " + gm.Level + "   •   " + gm.StarsCollected + " / " + gm.StarsNeeded + " stars";
-                gameOverInfo.style.opacity = a;
-                Show(gameOverRetry, gm.StateTime > 0.8f);
-                gameOverRetry.style.color = new Color(1f, 1f, 1f, Blink);
+                gameOverScreen.style.backgroundColor = new Color(0.03f, 0f, 0.02f, 0.6f * a);
+                gameOverScreen.style.opacity = a;
+                gameOverLevel.text = Loc.T("LEVEL ", "SEVİYE ") + gm.Level;
+                gameOverStars.Set(gm.StarsNeeded, gm.StarsCollected, Pickup.Gold, Faint);
+                gameOverBest.text = Loc.T("BEST  LEVEL ", "EN İYİ  SEVİYE ") + gm.BestLevel;
+                retryButton.label.text = Loc.T("LEVEL ", "SEVİYE ") + gm.Level;
+                UpdateStrip(gameOverStrip);
+                Show(gameOverButtons, gm.StateTime > 0.8f);
+                Show(newRunColumn, gm.Level > 1);
                 break;
             }
 
@@ -670,25 +997,100 @@ public class GameUI : MonoBehaviour
             {
                 bool refund = gm.ChoiceIndex >= gm.CoinChoices && gm.RefundTotal > 0;
                 Color rc = GameManager.UpgradeColor(GameManager.CharacterCard(gm.ActiveCharacter));
-                upgradeCounter.text = refund
-                    ? "Refund " + (gm.ChoiceIndex - gm.CoinChoices + 1) + " of " + gm.RefundTotal
-                    : "Coin " + (gm.ChoiceIndex + 1) + " of " + gm.CoinChoices;
-                upgradeCounter.style.color = refund ? rc : Pickup.CoinColor;
-                upgradeCounterIcon.style.unityBackgroundImageTintColor = refund ? rc : Pickup.CoinColor;
+                if (refund)
+                    upgradePicks.Set(gm.RefundTotal, gm.RefundTotal - (gm.ChoiceIndex - gm.CoinChoices), rc, Faint);
+                else
+                    upgradePicks.Set(gm.CoinChoices, gm.CoinChoices - gm.ChoiceIndex, Pickup.CoinColor, Faint);
                 UpdateCards();
                 break;
             }
         }
     }
 
-    /// <summary>HUD row with an icon that fills from the bottom, plus "n / max" text.</summary>
+    // ------------------------------------------------------------ element tile
+
+    static readonly string[] ElementSymbols =
+        { "H", "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne", "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar" };
+    static readonly string[] ElementNamesEn =
+        { "Hydrogen ion", "Hydrogen", "Helium", "Lithium", "Beryllium", "Boron", "Carbon", "Nitrogen", "Oxygen", "Fluorine",
+          "Neon", "Sodium", "Magnesium", "Aluminium", "Silicon", "Phosphorus", "Sulfur", "Chlorine", "Argon" };
+    static readonly string[] ElementNamesTr =
+        { "Hidrojen iyonu", "Hidrojen", "Helyum", "Lityum", "Berilyum", "Bor", "Karbon", "Azot", "Oksijen", "Flor",
+          "Neon", "Sodyum", "Magnezyum", "Alüminyum", "Silisyum", "Fosfor", "Kükürt", "Klor", "Argon" };
+    static readonly Color RadiumGlow = new Color(0.6f, 1f, 0.45f);
+
+    VisualElement elementTile;
+    Label elementNumber, elementSymbol, elementName, elementCharge;
+    int shownElement = -999;
+    float elementPop;
+
+    /// <summary>Periodic-table tile (top center): the element your electron count makes you.</summary>
+    void BuildElementTile()
+    {
+        elementTile = Box(hud);
+        elementTile.style.position = Position.Absolute;
+        elementTile.style.top = 12;
+        elementTile.style.left = Length.Percent(50);
+        elementTile.style.marginLeft = -40;
+        elementTile.style.width = 80;
+        elementTile.style.height = 88;
+        elementTile.style.alignItems = Align.Center;
+        elementTile.style.backgroundColor = WithAlpha(Panel, 0.85f);
+        Radius(elementTile, 8);
+        elementNumber = Text(elementTile, "", 13, true, Dim, TextAnchor.UpperLeft);
+        elementNumber.style.position = Position.Absolute;
+        elementNumber.style.left = 7;
+        elementNumber.style.top = 4;
+        elementCharge = Text(elementTile, "", 18, true, Color.white, TextAnchor.UpperRight);
+        elementCharge.style.position = Position.Absolute;
+        elementCharge.style.right = 7;
+        elementCharge.style.top = 2;
+        elementSymbol = Text(elementTile, "", 38, true, Color.white);
+        elementSymbol.style.marginTop = 16;
+        elementSymbol.style.height = 44;
+        elementName = Text(elementTile, "", 11, true, Dim);
+        elementName.style.marginTop = 2;
+    }
+
+    void UpdateElementTile()
+    {
+        PendulumController pc = gm.Pendulum;
+        int electrons = pc != null ? pc.BallCount + pc.TurretCount : 0;
+        bool radium = gm.ActiveCharacter == GameManager.Character.Spaceship;
+        bool ion = gm.ActiveCharacter == GameManager.Character.Challenger || (!radium && electrons == 0);
+        int key = radium ? 88 : ion ? 0 : Mathf.Clamp(electrons, 1, ElementSymbols.Length - 1);
+
+        if (key != shownElement)
+        {
+            bool gained = key > shownElement && shownElement != -999;
+            shownElement = key;
+            elementPop = 1f;
+            bool noble = key == 2 || key == 10 || key == 18;   // a full shell
+            Color accent = radium ? RadiumGlow : ion ? Danger : noble ? Pickup.Gold : Pickup.OrbColor;
+            elementNumber.text = radium ? "88" : (ion ? 1 : key).ToString();
+            elementSymbol.text = radium ? "Ra" : ElementSymbols[key];
+            elementCharge.text = ion ? "+" : "";
+            elementCharge.style.color = accent;
+            elementName.text = radium ? Loc.T("Radium", "Radyum")
+                                      : (Loc.Current == Language.Turkish ? ElementNamesTr[key] : ElementNamesEn[key]);
+            elementSymbol.style.color = accent;
+            Border(elementTile, noble || radium ? 2.5f : 1.5f, WithAlpha(accent, noble || radium ? 0.95f : 0.55f));
+            if (gained && noble && pc != null)   // shell completed: celebrate the noble gas
+                FloatText(pc.PivotPosition + Vector2.up * 1.2f, elementName.text.ToUpperInvariant(), Pickup.Gold, 26f);
+        }
+        elementPop = Mathf.MoveTowards(elementPop, 0f, Time.unscaledDeltaTime * 4f);
+        float s = 1f + 0.25f * elementPop * elementPop;
+        elementTile.style.scale = new Scale(new Vector3(s, s, 1f));
+    }
+
+    /// <summary>HUD row: an icon that fills from the bottom, plus a dot per recycled orb.</summary>
     Meter MakeMeter(VisualElement parent, Sprite sprite, Color color)
     {
         var m = new Meter { row = Row(parent) };
-        m.row.style.height = 30;
+        m.row.style.height = 28;
+        m.row.style.marginTop = 4;
         var holder = Box(m.row);
         holder.style.width = holder.style.height = 24;
-        holder.style.marginLeft = 3;
         holder.style.flexShrink = 0;
         var empty = Icon(holder, sprite, 24, new Color(1f, 1f, 1f, 0.18f));
         empty.style.position = Position.Absolute;
@@ -702,20 +1104,21 @@ public class GameUI : MonoBehaviour
         full.style.position = Position.Absolute;
         full.style.left = 0;
         full.style.bottom = 0;
-        m.label = Text(m.row, "", 18, false, color, TextAnchor.MiddleLeft);
-        m.label.style.marginLeft = 9;
+        m.dots = MakePips(m.row, ProcSprites.Ball, 9, 3);
+        m.dots.row.style.marginLeft = 8;
+        m.dots.row.style.flexWrap = Wrap.NoWrap;
         Show(m.row, false);
         return m;
     }
 
-    static void UpdateMeter(Meter m, bool owned, int progress, int max)
+    static void UpdateMeter(Meter m, bool owned, int progress, int max, Color color)
     {
         Show(m.row, owned);
         if (!owned || (m.shown == progress && m.shownMax == max)) return;
         m.shown = progress;
         m.shownMax = max;
         m.clip.style.height = 24f * Mathf.Clamp01(progress / (float)Mathf.Max(1, max));
-        m.label.text = "recycle " + progress + " / " + max;
+        m.dots.Set(max, progress, color, Faint);
     }
 
     /// <summary>Short text that pops up at a world position, rises a little and fades.</summary>
@@ -762,23 +1165,16 @@ public class GameUI : MonoBehaviour
     void UpdateHud(GameManager.State st)
     {
         UpdateFloaters();
-        UpdateMeter(heartMeter, gm.HasHealthRecycler, gm.HeartRecycleProgress, gm.OrbsPerRecycledHeart);
-        UpdateMeter(coinMeter, gm.HasCoinRecycler, gm.CoinRecycleProgress, gm.OrbsPerRecycledCoin);
+        UpdateMeter(heartMeter, gm.HasHealthRecycler, gm.HeartRecycleProgress, gm.OrbsPerRecycledHeart, Pickup.HeartColor);
+        UpdateMeter(coinMeter, gm.HasCoinRecycler, gm.CoinRecycleProgress, gm.OrbsPerRecycledCoin, Pickup.CoinColor);
+        Show(pauseButton, st == GameManager.State.Playing);
 
-        if (shownLevel != gm.Level) { shownLevel = gm.Level; levelLabel.text = "LEVEL " + shownLevel; }
-        if (shownStars != gm.StarsCollected || shownNeeded != gm.StarsNeeded)
-        {
-            shownStars = gm.StarsCollected;
-            shownNeeded = gm.StarsNeeded;
-            starsLabel.text = shownStars + " / " + shownNeeded;
-        }
-        if (shownCoins != gm.LevelCoins || shownCoinMax != gm.CoinsPerLevel)
-        {
-            shownCoins = gm.LevelCoins;
-            shownCoinMax = gm.CoinsPerLevel;
-            coinsLabel.text = shownCoins + " / " + shownCoinMax;
-        }
-        if (shownBest != gm.BestLevel) { shownBest = gm.BestLevel; bestLabel.text = "BEST  LV " + shownBest; }
+        UpdateElementTile();
+
+        if (shownLevel != gm.Level) { shownLevel = gm.Level; levelLabel.text = Loc.T("LEVEL ", "SEVİYE ") + shownLevel; }
+        starPips.Set(gm.StarsNeeded, gm.StarsCollected, Pickup.Gold, Faint);
+        coinPips.Set(Mathf.Max(gm.CoinsPerLevel, gm.LevelCoins), gm.LevelCoins, Pickup.CoinColor, Faint);
+        heartPips.Set(gm.MaxHealth, gm.Lives, Pickup.HeartColor, Faint);
 
         if (shownCharacter != gm.ActiveCharacter)
         {
@@ -790,51 +1186,30 @@ public class GameUI : MonoBehaviour
         }
 
         PendulumController pc = gm.Pendulum;
-        if (pc != null)
-        {
-            // Turrets (Spaceship) then balls per shell ("turrets 1/2   3/8").
-            int sig = pc.ShellTotal * 7 + pc.TurretSlots * 1009 + pc.TurretCount * 31337;
-            for (int i = 0; i < pc.ShellTotal; i++) sig = sig * 31 + pc.ShellCount(i) * 97 + pc.ShellCapacity(i);
-            if (sig != shownShellSig)
-            {
-                shownShellSig = sig;
-                Show(shellsRow, pc.ShellTotal > 0 || pc.TurretSlots > 0);
-                string shells = pc.TurretSlots > 0 ? "turrets " + pc.TurretCount + "/" + pc.TurretSlots : "";
-                for (int i = 0; i < pc.ShellTotal; i++)
-                    shells += (shells.Length > 0 ? "   " : "") + pc.ShellCount(i) + "/" + pc.ShellCapacity(i);
-                shellsLabel.text = shells;
-            }
+        if (pc == null) return;
 
-            Show(speedBox, st != GameManager.State.Upgrade);
-            float spd = pc.Speed;
-            int tenths = Mathf.RoundToInt(spd * 10f);
-            if (tenths != shownSpeed)
+        // Turrets (Spaceship), then one dot per orb slot, grouped by orbit.
+        int sig = pc.ShellTotal * 7 + pc.TurretSlots * 1009 + pc.TurretCount * 31337;
+        for (int i = 0; i < pc.ShellTotal; i++) sig = sig * 31 + pc.ShellCount(i) * 97 + pc.ShellCapacity(i);
+        if (sig != shownShellSig)
+        {
+            shownShellSig = sig;
+            shellsRow.Clear();
+            Color turret = GameManager.UpgradeColor(GameManager.UpgradeType.Spaceship);
+            for (int t = 0; t < pc.TurretSlots; t++)
+                Icon(shellsRow, ProcSprites.Trefoil, 16, t < pc.TurretCount ? turret : Faint).style.marginRight = 3;
+            for (int s = 0; s < pc.ShellTotal; s++)
             {
-                shownSpeed = tenths;
-                speedLabel.text = (tenths / 10f).ToString("0.0") + "  SPEED";
+                var group = Row(shellsRow);
+                if (s > 0 || pc.TurretSlots > 0) group.style.marginLeft = 10;
+                Color c = pc.ShellColor(s);
+                for (int i = 0; i < pc.ShellCapacity(s); i++)
+                    Icon(group, ProcSprites.Ball, 12, i < pc.ShellCount(s) ? c : Faint).style.marginRight = 2;
             }
-            speedFill.style.width = Length.Percent(100f * Mathf.Clamp01(spd / Mathf.Max(0.01f, pc.MaxSpeed)));
+            Show(shellsRow, pc.ShellTotal > 0 || pc.TurretSlots > 0);
         }
 
-        // Hearts: rebuilt when max health changes, tinted every time health changes.
-        int max = gm.MaxHealth;
-        if (hearts.Count != max)
-        {
-            heartsRow.Clear();
-            hearts.Clear();
-            for (int i = 0; i < max; i++)
-            {
-                var h = Icon(heartsRow, ProcSprites.Heart, 28, Color.white);
-                if (i > 0) h.style.marginLeft = 6;
-                hearts.Add(h);
-            }
-            shownLives = -1;
-        }
-        if (shownLives != gm.Lives)
-        {
-            shownLives = gm.Lives;
-            for (int i = 0; i < hearts.Count; i++)
-                hearts[i].style.unityBackgroundImageTintColor = i < shownLives ? Pickup.HeartColor : new Color(1f, 1f, 1f, 0.15f);
-        }
+        Show(speedBox, st == GameManager.State.Playing);
+        speedFill.style.width = Length.Percent(100f * Mathf.Clamp01(pc.Speed / Mathf.Max(0.01f, pc.MaxSpeed)));
     }
 }

@@ -248,6 +248,173 @@ public static class ProcSprites
         return Gray(v, cover);
     });
 
+    /// <summary>
+    /// Shaded spheres packed together (a nucleus). Each entry is (x, y, brightness); drawn in
+    /// order, so later ones sit on top. Brightness 1 = proton, ~0.6 = neutron.
+    /// </summary>
+    static Color Nucleons(float x, float y, Vector3[] n, float rad)
+    {
+        Color result = Color.clear;
+        for (int i = 0; i < n.Length; i++)
+        {
+            float dx = x - n[i].x, dy = y - n[i].y;
+            float r = Mathf.Sqrt(dx * dx + dy * dy) / rad;
+            float a = AA((1f - r) * rad, 0.02f);
+            if (a <= 0f) continue;
+            float dh = Vector2.Distance(new Vector2(dx, dy) / rad, new Vector2(-0.35f, 0.4f));
+            float v = (0.45f + 0.55f * Mathf.Clamp01(1f - dh / 1.2f)) * Mathf.Lerp(1f, 0.6f, Mathf.InverseLerp(0.6f, 1f, r));
+            v += 0.45f * Mathf.Pow(Mathf.Clamp01(1f - dh / 0.3f), 2f);
+            v *= n[i].z;
+            if (r > 0.86f) v *= 0.55f;                                        // outline
+            v = Mathf.Clamp01(v);
+            Color c = new Color(v, v, v, 1f);
+            if (result.a <= 0f) result = new Color(v, v, v, a);
+            else result = new Color(Mathf.Lerp(result.r, c.r, a), Mathf.Lerp(result.g, c.g, a), Mathf.Lerp(result.b, c.b, a),
+                                    1f - (1f - result.a) * (1f - a));
+        }
+        return result;
+    }
+
+    /// <summary>Alpha particle: two protons (bright) and two neutrons (dark) in a tight cluster.</summary>
+    public static Sprite Alpha => Build("Alpha", 128, 128, 128f, (x, y) => Nucleons(x, y, new[]
+    {
+        new Vector3(-0.27f, -0.27f, 0.6f), new Vector3(0.29f, -0.25f, 1f),
+        new Vector3(-0.25f, 0.29f, 1f), new Vector3(0.27f, 0.27f, 0.6f),
+    }, 0.42f));
+
+    /// <summary>Unstable isotope: a lumpy, lopsided nucleus with one nucleon working loose.</summary>
+    public static Sprite Isotope => Build("Isotope", 128, 128, 128f, (x, y) => Nucleons(x, y, new[]
+    {
+        new Vector3(0.62f, 0.18f, 1f),                                         // the loose one
+        new Vector3(-0.36f, 0.2f, 0.6f), new Vector3(-0.3f, -0.3f, 1f), new Vector3(0.12f, -0.4f, 0.6f),
+        new Vector3(0.38f, -0.08f, 1f), new Vector3(0.14f, 0.38f, 0.6f), new Vector3(-0.05f, 0.02f, 1f),
+    }, 0.3f));
+
+    /// <summary>Positron: a glowing sphere marked with a bright "+".</summary>
+    public static Sprite Positron => Build("Positron", 128, 128, 128f, (x, y) =>
+    {
+        float r = Mathf.Sqrt(x * x + y * y);
+        float a = AA(0.96f - r, 0.03f);
+        float dh = Vector2.Distance(new Vector2(x, y), new Vector2(-0.35f, 0.4f));
+        float v = (0.35f + 0.4f * Mathf.Clamp01(1f - dh / 1.2f)) * Mathf.Lerp(1f, 0.65f, Mathf.InverseLerp(0.7f, 0.96f, r));
+        float plus = Mathf.Max(Mathf.Min(0.48f - Mathf.Abs(x), 0.12f - Mathf.Abs(y)),
+                               Mathf.Min(0.48f - Mathf.Abs(y), 0.12f - Mathf.Abs(x)));
+        v = Mathf.Lerp(v, 1f, AA(plus, 0.03f));
+        return Gray(v, a);
+    });
+
+    /// <summary>Gamma ray pointing toward +x: a tight wave that brightens into a glowing head.</summary>
+    public static Sprite Gamma => Build("Gamma", 128, 128, 128f, (x, y) =>
+    {
+        const float k = Mathf.PI * 3.2f;
+        float env = Mathf.Clamp01((x + 0.95f) / 0.9f);
+        float wave = 0.32f * Mathf.Sin(x * k) * env;
+        float slope = 0.32f * k * Mathf.Cos(x * k) * env;
+        float d = Mathf.Abs(y - wave) / Mathf.Sqrt(1f + slope * slope);
+        float body = AA(0.075f - d, 0.025f) * Mathf.Clamp01((x + 0.95f) / 0.7f) * (x < 0.92f ? 1f : 0f);
+        Vector2 head = new Vector2(0.72f, 0.32f * Mathf.Sin(0.72f * k));
+        float hr = Vector2.Distance(new Vector2(x, y), head);
+        float glow = AA(0.2f - hr, 0.05f);
+        float v = 0.7f + 0.3f * env + 0.4f * glow;
+        return Gray(v, Mathf.Max(body, glow));
+    });
+
+    /// <summary>Electron: a shaded sphere marked with a dark "−".</summary>
+    public static Sprite Electron => Build("Electron", 128, 128, 128f, (x, y) =>
+    {
+        float r = Mathf.Sqrt(x * x + y * y);
+        float a = AA(0.96f - r, 0.03f);
+        Vector2 hl = new Vector2(-0.35f, 0.4f);
+        float dh = Vector2.Distance(new Vector2(x, y), hl);
+        float v = 0.5f + 0.5f * Mathf.Clamp01(1f - dh / 1.2f);
+        v *= Mathf.Lerp(1f, 0.7f, Mathf.InverseLerp(0.7f, 0.96f, r));
+        v += 0.5f * Mathf.Pow(Mathf.Clamp01(1f - dh / 0.28f), 2f);
+        float minus = Mathf.Min(0.46f - Mathf.Abs(x), 0.11f - Mathf.Abs(y));
+        v = Mathf.Lerp(v, 0.18f, AA(minus, 0.03f));
+        return Gray(v, a);
+    });
+
+    /// <summary>The player's core: an atomic nucleus of packed protons (bright) and neutrons (dark).</summary>
+    public static Sprite Nucleus => Build("Nucleus", 128, 128, 128f, (x, y) =>
+    {
+        var n = new List<Vector3>();
+        for (int i = 0; i < 3; i++)                                           // back
+        {
+            float a = (30f + i * 120f) * Mathf.Deg2Rad;
+            n.Add(new Vector3(Mathf.Cos(a) * 0.6f, Mathf.Sin(a) * 0.6f, i % 2 == 0 ? 0.6f : 1f));
+        }
+        for (int i = 0; i < 6; i++)                                           // middle ring
+        {
+            float a = (i * 60f + 10f) * Mathf.Deg2Rad;
+            n.Add(new Vector3(Mathf.Cos(a) * 0.42f, Mathf.Sin(a) * 0.42f, i % 2 == 0 ? 1f : 0.6f));
+        }
+        n.Add(new Vector3(-0.04f, 0.03f, 1f));                                // front
+        return Nucleons(x, y, n.ToArray(), 0.31f);
+    });
+
+    /// <summary>Photon: a glowing wave packet (a short wave under a bell-shaped envelope).</summary>
+    public static Sprite Photon => Build("Photon", 128, 128, 128f, (x, y) =>
+    {
+        const float k = Mathf.PI * 4f;
+        float env = Mathf.Exp(-x * x / 0.3f);
+        float wave = 0.34f * Mathf.Sin(x * k) * env;
+        float slope = 0.34f * k * Mathf.Cos(x * k) * env;
+        float d = Mathf.Abs(y - wave) / Mathf.Sqrt(1f + slope * slope);
+        float line = AA(0.075f - d, 0.025f) * Mathf.Clamp01(env * 2.5f);
+        float halo = Mathf.Exp(-(x * x / 0.3f + y * y / 0.09f));
+        float v = 0.8f + 0.2f * line;
+        return Gray(v, Mathf.Max(line, halo * 0.55f));
+    });
+
+    /// <summary>Quanta: Rutherford's atom: three tilted elliptical orbits around a small nucleus.</summary>
+    public static Sprite Quanta => Build("Quanta", 128, 128, 128f, (x, y) =>
+    {
+        const float A = 0.9f, B = 0.3f;
+        float best = -1f;
+        for (int i = 0; i < 3; i++)
+        {
+            float t = i * 60f * Mathf.Deg2Rad;
+            float u = x * Mathf.Cos(t) + y * Mathf.Sin(t), w = -x * Mathf.Sin(t) + y * Mathf.Cos(t);
+            float f = Mathf.Sqrt(u * u / (A * A) + w * w / (B * B));
+            float g = Mathf.Sqrt(u * u / (A * A * A * A) + w * w / (B * B * B * B)) / Mathf.Max(f, 1e-4f);
+            float d = Mathf.Abs(f - 1f) / Mathf.Max(g, 1e-4f);
+            best = Mathf.Max(best, 0.055f - d);
+        }
+        float r = Mathf.Sqrt(x * x + y * y);
+        float core = 0.17f - r;
+        float a = AA(Mathf.Max(best, core), 0.025f);
+        float v = core > best ? 0.75f + 0.25f * Mathf.Clamp01(1f - r / 0.17f) : 0.9f;
+        return Gray(v, a);
+    });
+
+    /// <summary>Stability (health): a calm, tightly bound nucleus inside a closed ring.</summary>
+    public static Sprite Stability => Build("Stability", 128, 128, 128f, (x, y) =>
+    {
+        var n = new Vector3[7];
+        for (int i = 0; i < 6; i++)
+        {
+            float a = (i * 60f + 30f) * Mathf.Deg2Rad;
+            n[i] = new Vector3(Mathf.Cos(a) * 0.36f, Mathf.Sin(a) * 0.36f, i % 2 == 0 ? 1f : 0.65f);
+        }
+        n[6] = new Vector3(0f, 0f, 1f);
+        Color c = Nucleons(x, y, n, 0.25f);
+        float r = Mathf.Sqrt(x * x + y * y);
+        float ring = AA(0.06f - Mathf.Abs(r - 0.84f), 0.025f);
+        return ring > c.a ? Gray(0.95f, ring) : c;
+    });
+
+    /// <summary>Radiation trefoil (Radium / emitters).</summary>
+    public static Sprite Trefoil => Build("Trefoil", 128, 128, 128f, (x, y) =>
+    {
+        float r = Mathf.Sqrt(x * x + y * y);
+        float ang = Mathf.Atan2(y, x) * Mathf.Rad2Deg;
+        float diff = 180f;
+        foreach (float c in new[] { 90f, 210f, 330f }) diff = Mathf.Min(diff, Mathf.Abs(Mathf.DeltaAngle(ang, c)));
+        float blade = Mathf.Min(Mathf.Min(r - 0.3f, 0.95f - r), (30f - diff) * Mathf.Deg2Rad * r);
+        float hub = 0.19f - r;
+        return new Color(1f, 1f, 1f, AA(Mathf.Max(blade, hub), 0.02f));
+    });
+
     /// <summary>Lumpy cratered asteroid (3 variants). Surface is at roughly 0.42 world units from the center.</summary>
     public static Sprite Asteroid(int variant)
     {

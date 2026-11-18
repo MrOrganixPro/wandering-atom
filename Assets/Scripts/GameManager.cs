@@ -5,13 +5,14 @@ using UnityEngine.Serialization;
 
 /// <summary>
 /// Owns the game loop: title, levels, stars, lives, pause, level complete, game over,
-/// saved progress, camera follow/shake, hit-stop and the scrolling background.
+/// camera follow/shake, hit-stop and the scrolling background. Runs are not saved; only the
+/// best level reached is remembered.
 /// The HUD and menus are drawn by GameUI (UI Toolkit), which reads this class's state.
 /// Created automatically when any scene loads, so it does not need to be in the scene.
 /// </summary>
 public class GameManager : MonoBehaviour
 {
-    public enum State { Title, Playing, Paused, LevelComplete, Upgrade, GameOver }
+    public enum State { Title, Playing, Paused, LevelComplete, Upgrade, GameOver, Dying }
 
     public static GameManager Instance { get; private set; }
 
@@ -184,6 +185,10 @@ public class GameManager : MonoBehaviour
     public float turretRangePerUpgrade = 1f;
     public int maxTurretRangeUpgrades = 5;
 
+    [Header("Music")]
+    [Tooltip("Volume of the generative ambient score (0 = off).")]
+    [Range(0f, 1f)] public float musicVolume = 0.4f;
+
     [Header("Camera & Look")]
     public float cameraSize = 7f;
     public float cameraSmoothTime = 0.25f;
@@ -194,10 +199,13 @@ public class GameManager : MonoBehaviour
     public int dustCount = 50;
 
     public State CurrentState => state;
+    /// <summary>Set by GameUI while a full-screen overlay (the Index) is open: menu keys are ignored.</summary>
+    public bool OverlayOpen { get; set; }
     public int Level => level;
 
     State state = State.Title;
-    int level = 1, savedLevel = 1, bestLevel = 1;
+    int level = 1, bestLevel = 1;
+    int levelStartCoinProgress, levelStartHeartProgress;   // restored when a level is retried
     int lives, starsNeeded, starsCollected, starsSpawned;
     float levelTime, stateTime, shake, hitStop, heartTimer, asteroidTimer, wellTimer;
     bool heartAvailable;   // this level rolled its (rare) heart and hasn't spawned it yet
@@ -268,7 +276,6 @@ public class GameManager : MonoBehaviour
     public int StarsNeeded => starsNeeded;
     public int LevelCoins => levelCoins;
     public int BestLevel => bestLevel;
-    public int SavedLevel => savedLevel;
     public float StateTime => stateTime;
     public float LevelTime => levelTime;
     public Character ActiveCharacter => character;
@@ -286,6 +293,7 @@ public class GameManager : MonoBehaviour
 
     PendulumController pendulum;
     EnemySpawner spawner;
+    Music music;
     Camera cam;
     float camZ = -10f;
     Vector2 viewCenter, viewVel;
@@ -336,61 +344,33 @@ public class GameManager : MonoBehaviour
 
         BuildBackground();
         Sfx.Init(gameObject);
+        music = Music.Create(transform);
         if (GetComponent<GameUI>() == null) gameObject.AddComponent<GameUI>();
-        savedLevel = Mathf.Max(1, PlayerPrefs.GetInt(LevelKey, 1));
-        bestLevel = Mathf.Max(savedLevel, PlayerPrefs.GetInt(BestKey, 1));
-        LoadUpgrades();
-        ApplyUpgrades();
+        ClearOldSave();
+        bestLevel = Mathf.Max(1, PlayerPrefs.GetInt(BestKey, 1));
+        ResetUpgrades();
         lives = MaxHealth;
         SetState(State.Title);
     }
 
     // ------------------------------------------------------------- upgrades
 
-    void LoadUpgrades()
+    /// <summary>Runs are no longer saved: remove what older versions stored.</summary>
+    static void ClearOldSave()
     {
-        upgMaxHealth = PlayerPrefs.GetInt(UpgradeKeyPrefix + "MaxHealth", 0);
-        upgSpeed = PlayerPrefs.GetInt(UpgradeKeyPrefix + "Speed", 0);
-        upgThrust = PlayerPrefs.GetInt(UpgradeKeyPrefix + "Thrust", 0);
-        upgTorque = PlayerPrefs.GetInt(UpgradeKeyPrefix + "Torque", 0);
-        character = (Character)Mathf.Clamp(PlayerPrefs.GetInt(UpgradeKeyPrefix + "GameChanger", 0), 0, 3);
-        upgBallArmor = Mathf.Min(BallArmorCap, PlayerPrefs.GetInt(UpgradeKeyPrefix + "BallArmor", 0));
-        upgThrust = Mathf.Min(upgThrust, ThrustTorqueCap);
-        upgTorque = Mathf.Min(upgTorque, ThrustTorqueCap);
-        upgBallSize = Mathf.Clamp(PlayerPrefs.GetInt(UpgradeKeyPrefix + "BallSize", 0), 0, maxBallSizeUpgrades);
-        upgPickupRange = Mathf.Clamp(PlayerPrefs.GetInt(UpgradeKeyPrefix + "PickupRange", 0), 0, maxPickupRangeUpgrades);
-        upgRepel = Mathf.Clamp(PlayerPrefs.GetInt(UpgradeKeyPrefix + "Repel", 0), 0, maxRepelUpgrades);
-        upgBooster = Mathf.Clamp(PlayerPrefs.GetInt(UpgradeKeyPrefix + "Booster", 0), 0, maxBoosterUpgrades);
-        upgRegen = Mathf.Clamp(PlayerPrefs.GetInt(UpgradeKeyPrefix + "Regeneration", 0), 0, 1);
-        upgFireRate = Mathf.Clamp(PlayerPrefs.GetInt(UpgradeKeyPrefix + "FireRate", 0), 0, maxFireRateUpgrades);
-        upgTurretRange = Mathf.Clamp(PlayerPrefs.GetInt(UpgradeKeyPrefix + "TurretRange", 0), 0, maxTurretRangeUpgrades);
-        upgInsight = Mathf.Clamp(PlayerPrefs.GetInt(UpgradeKeyPrefix + "Insight", 0), 0, 1);
-        upgCoinRecycler = Mathf.Clamp(PlayerPrefs.GetInt(UpgradeKeyPrefix + "CoinRecycler", 0), 0, 1);
-        upgHealthRecycler = Mathf.Clamp(PlayerPrefs.GetInt(UpgradeKeyPrefix + "HealthRecycler", 0), 0, 1);
-        coinRecycleProgress = Mathf.Max(0, PlayerPrefs.GetInt(UpgradeKeyPrefix + "CoinRecycleProgress", 0));
-        heartRecycleProgress = Mathf.Max(0, PlayerPrefs.GetInt(UpgradeKeyPrefix + "HeartRecycleProgress", 0));
+        string[] keys = { "MaxHealth", "Speed", "Thrust", "Torque", "BallArmor", "GameChanger", "BallSize",
+            "PickupRange", "Repel", "Booster", "Regeneration", "FireRate", "TurretRange", "Insight",
+            "CoinRecycler", "HealthRecycler", "CoinRecycleProgress", "HeartRecycleProgress" };
+        PlayerPrefs.DeleteKey(LevelKey);
+        foreach (var k in keys) PlayerPrefs.DeleteKey(UpgradeKeyPrefix + k);
+        PlayerPrefs.Save();
     }
 
-    void SaveUpgrades()
+    void SetBest(int reached)
     {
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "MaxHealth", upgMaxHealth);
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "Speed", upgSpeed);
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "Thrust", upgThrust);
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "Torque", upgTorque);
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "BallArmor", upgBallArmor);
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "GameChanger", (int)character);
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "BallSize", upgBallSize);
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "PickupRange", upgPickupRange);
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "Repel", upgRepel);
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "Booster", upgBooster);
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "Regeneration", upgRegen);
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "FireRate", upgFireRate);
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "TurretRange", upgTurretRange);
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "Insight", upgInsight);
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "CoinRecycler", upgCoinRecycler);
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "HealthRecycler", upgHealthRecycler);
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "CoinRecycleProgress", coinRecycleProgress);
-        PlayerPrefs.SetInt(UpgradeKeyPrefix + "HeartRecycleProgress", heartRecycleProgress);
+        if (reached <= bestLevel) return;
+        bestLevel = reached;
+        PlayerPrefs.SetInt(BestKey, bestLevel);
         PlayerPrefs.Save();
     }
 
@@ -403,7 +383,6 @@ public class GameManager : MonoBehaviour
         upgInsight = upgCoinRecycler = upgHealthRecycler = 0;
         coinRecycleProgress = heartRecycleProgress = 0;
         character = Character.None;
-        SaveUpgrades();
         ApplyUpgrades();
     }
 
@@ -578,6 +557,9 @@ public class GameManager : MonoBehaviour
                 if (slot >= 0) offer[slot] = rare;
             }
         }
+
+        for (int i = 0; i < offer.Count; i++)
+            if (i != mysteryIndex) Codex.See(Codex.Upgrade(offer[i]));
     }
 
     /// <summary>
@@ -650,7 +632,6 @@ public class GameManager : MonoBehaviour
                 break;
             }
         }
-        SaveUpgrades();
         ApplyUpgrades();
         Sfx.Play(IsCharacter(picked) ? "level" : "orb");
 
@@ -672,89 +653,140 @@ public class GameManager : MonoBehaviour
     {
         switch (u)
         {
-            case UpgradeType.Heal: return "FULL REPAIR";
-            case UpgradeType.MaxHealth: return "+1 MAX HEALTH";
-            case UpgradeType.Speed: return "TOP SPEED";
-            case UpgradeType.Thrust: return "THRUST";
-            case UpgradeType.Torque: return "TORQUE";
-            case UpgradeType.Challenger: return "THE CHALLENGER";
-            case UpgradeType.Sluggish: return "THE SLUGGISH";
-            case UpgradeType.BallSize: return "BIGGER BALLS";
-            case UpgradeType.PickupRange: return "PICKUP RANGE";
-            case UpgradeType.Repel: return "REPEL";
-            case UpgradeType.Booster: return "EMERGENCY BOOSTER";
-            case UpgradeType.Regeneration: return "REGENERATION";
-            case UpgradeType.Insight: return "INSIGHT";
-            case UpgradeType.CoinRecycler: return "COIN RECYCLER";
-            case UpgradeType.HealthRecycler: return "HEALTH RECYCLER";
-            case UpgradeType.Spaceship: return "THE SPACESHIP";
-            case UpgradeType.FireRate: return "FIRE RATE";
-            case UpgradeType.TurretRange: return "TURRET RANGE";
-            default: return "BALL ARMOR";
+            case UpgradeType.Heal: return Loc.T("FULL STABILITY", "TAM KARARLILIK");
+            case UpgradeType.MaxHealth: return Loc.T("MAX STABILITY", "MAKS. KARARLILIK");
+            case UpgradeType.Speed: return Loc.T("TOP SPEED", "AZAMİ HIZ");
+            case UpgradeType.Thrust: return Loc.T("THRUST", "İTKİ");
+            case UpgradeType.Torque: return Loc.T("TORQUE", "TORK");
+            case UpgradeType.Challenger: return Loc.T("HYDROGEN ION", "HİDROJEN İYONU");
+            case UpgradeType.Sluggish: return Loc.T("ARGON", "ARGON");
+            case UpgradeType.Spaceship: return Loc.T("RADIUM", "RADYUM");
+            case UpgradeType.BallSize: return Loc.T("BIGGER ELECTRONS", "BÜYÜK ELEKTRONLAR");
+            case UpgradeType.PickupRange: return Loc.T("PICKUP RANGE", "TOPLAMA MENZİLİ");
+            case UpgradeType.Repel: return Loc.T("REPEL", "İTME");
+            case UpgradeType.Booster: return Loc.T("BOOSTER", "HIZLANDIRICI");
+            case UpgradeType.Regeneration: return Loc.T("REGENERATION", "YENİLENME");
+            case UpgradeType.Insight: return Loc.T("INSIGHT", "ÖNGÖRÜ");
+            case UpgradeType.CoinRecycler: return Loc.T("QUANTA RECYCLER", "KUANTA DÖNÜŞÜMÜ");
+            case UpgradeType.HealthRecycler: return Loc.T("STABILITY RECYCLER", "KARARLILIK DÖNÜŞÜMÜ");
+            case UpgradeType.FireRate: return Loc.T("DECAY RATE", "BOZUNMA HIZI");
+            case UpgradeType.TurretRange: return Loc.T("RADIATION RANGE", "RADYASYON MENZİLİ");
+            default: return Loc.T("ELECTRON BINDING", "ELEKTRON BAĞI");
         }
     }
 
-    /// <summary>Upgrade levels are shown 1-based: no upgrades = level 1.</summary>
-    string LevelStep(int upgrades, int cap)
-    {
-        string s = "(level " + (upgrades + 1) + " → " + (upgrades + 2);
-        if (cap != int.MaxValue) s += ", max " + (cap + 1);
-        return s + ")";
-    }
+    string ArgonText(int refunds) =>
+        Loc.T("Third shell: 18 electrons\n2\u00d7 electrons per level\nThrust & Torque max " + (sluggishUpgradeCap + 1),
+              "3. kabuk: 18 elektron\nSeviyede 2\u00d7 elektron\nİtki ve Tork en fazla " + (sluggishUpgradeCap + 1))
+        + (refunds > 0 ? Loc.T("\n+" + refunds + " picks now", "\nŞimdi +" + refunds + " seçim") : "");
 
-    /// <summary>For unlockable abilities: level 0 = locked, so the first purchase reads "(unlock)".</summary>
-    static string UnlockStep(int upgrades, int cap) =>
-        upgrades == 0 ? "(unlock)" : "(level " + upgrades + " → " + (upgrades + 1) + ", max " + cap + ")";
+    string HydrogenText(string last) =>
+        Loc.T("Lose every electron,\nforever\n" + challengerCoins + " quanta per level\n",
+              "Tüm elektronlarını\nsonsuza dek kaybet\nSeviye başına " + challengerCoins + " kuanta\n") + last;
 
+    /// <summary>One or two short lines; levels are shown as pips on the card (see UpgradeLevels).</summary>
     public string UpgradeDescription(UpgradeType u)
     {
         switch (u)
         {
-            case UpgradeType.Heal: return "Restore health to max\n(" + lives + " → " + MaxHealth + ")";
-            case UpgradeType.MaxHealth: return "Permanently gain\none extra heart";
-            case UpgradeType.Speed: return "+" + Mathf.RoundToInt(speedPerUpgrade * 100) + "% max speed\n" + LevelStep(upgSpeed, int.MaxValue);
-            case UpgradeType.Thrust: return "+" + Mathf.RoundToInt(thrustPerUpgrade * 100) + "% acceleration\n" + LevelStep(upgThrust, ThrustTorqueCap);
-            case UpgradeType.Torque: return "Sharper turns\nand braking\n" + LevelStep(upgTorque, ThrustTorqueCap);
+            case UpgradeType.Heal: return Loc.T("Stability ", "Kararlılık ") + lives + " \u2192 " + MaxHealth;
+            case UpgradeType.MaxHealth: return Loc.T("+1 stability", "+1 kararlılık");
+            case UpgradeType.Speed: return Loc.Pct(speedPerUpgrade) + Loc.T(" top speed", " azami hız");
+            case UpgradeType.Thrust: return Loc.Pct(thrustPerUpgrade) + Loc.T(" acceleration", " ivme");
+            case UpgradeType.Torque: return Loc.T("Sharper turns\nand braking", "Daha keskin dönüş\nve fren");
             case UpgradeType.Challenger:
-                return "Lose ALL balls and\nball upgrades, forever.\n" + challengerCoins + " coins per level\ninstead of " + coinsPerLevel + "."
-                     + "\nRefunds " + ChallengerRefunds + (ChallengerRefunds == 1 ? " pick" : " picks") + "\n(1 per level beaten"
-                     + (upgBallArmor + upgBallSize > 0 ? ",\n+" + (upgBallArmor + upgBallSize) + " for ball upgrades)." : ").");
-            case UpgradeType.Sluggish:
-            {
-                int refunds = SluggishRefunds;
-                return "Thrust & Torque capped\nat level " + (sluggishUpgradeCap + 1) + "."
-                     + (refunds > 0 ? "\nRefunds " + refunds + (refunds == 1 ? " pick." : " picks.") : "")
-                     + "\nTighter orbitals, a 3rd\nshell (+" + sluggishExtraShellCapacity + "), ball armor\nup to " + (1 + sluggishMaxBallArmor)
-                     + " hits, " + sluggishOrbMultiplier + "× orbs.";
-            }
-            case UpgradeType.BallSize:
-                return "+" + Mathf.RoundToInt(ballSizePerUpgrade * 100) + "% ball size:\nblocks more, grabs more\n" + LevelStep(upgBallSize, maxBallSizeUpgrades);
-            case UpgradeType.PickupRange:
-                return "Collect pickups from\nmuch further away\n(thruster and balls)\n" + LevelStep(upgPickupRange, maxPickupRangeUpgrades);
-            case UpgradeType.Repel:
-                return (upgRepel == 0 ? "Getting hit releases\na blast that pushes\nenemies away"
-                                      : "Wider, stronger\nrepel blast")
-                     + "\n" + UnlockStep(upgRepel, maxRepelUpgrades);
-            case UpgradeType.Booster:
-                return (upgBooster == 0 ? "Getting hit fires a\nspeed boost past\nyour top speed"
-                                        : "Longer, stronger\nemergency boost")
-                     + "\n" + UnlockStep(upgBooster, maxBoosterUpgrades);
-            case UpgradeType.Regeneration:
-                return "Regain one heart\nat the start of\nevery level";
-            case UpgradeType.Insight:
-                return "See asteroids and\ngravity wells coming\nfrom off-screen";
-            case UpgradeType.CoinRecycler:
-                return "Orbs you have no\nroom for are recycled:\nevery " + OrbsPerRecycledCoin + " make a coin";
-            case UpgradeType.HealthRecycler:
-                return "Orbs you have no\nroom for are recycled\nwhile hurt: every " + OrbsPerRecycledHeart + "\nrestore a heart";
+                return HydrogenText(Loc.T("+" + ChallengerRefunds + " picks now", "Şimdi +" + ChallengerRefunds + " seçim"));
+            case UpgradeType.Sluggish: return ArgonText(SluggishRefunds);
             case UpgradeType.Spaceship:
-                return "Your inner orbital\nbecomes two turrets\nthat shoot enemies.\nOrbs build them; they\ncan't be hit or block."
-                     + "\nUnlocks Fire Rate and\nTurret Range upgrades.";
-            case UpgradeType.FireRate:
-                return "+" + Mathf.RoundToInt(fireRatePerUpgrade * 100) + "% turret\nshots per second\n" + LevelStep(upgFireRate, maxFireRateUpgrades);
+                return Loc.T("Inner shell becomes\n2 radiation emitters\nthat shoot enemies",
+                             "İç kabuk, düşmanları\nvuran 2 radyasyon\nyayıcısına dönüşür");
+            case UpgradeType.BallSize: return Loc.Pct(ballSizePerUpgrade) + Loc.T(" electron size", " elektron boyutu");
+            case UpgradeType.PickupRange: return Loc.T("Grab pickups\nfrom further away", "Eşyaları daha\nuzaktan topla");
+            case UpgradeType.Repel:
+                return upgRepel == 0 ? Loc.T("Getting hit blasts\nenemies & dust away", "Hasar alınca düşmanları\nve tozu iter")
+                                     : Loc.T("Bigger blast", "Daha büyük patlama");
+            case UpgradeType.Booster:
+                return upgBooster == 0 ? Loc.T("Getting hit gives\na burst of speed", "Hasar alınca\nani hız kazan")
+                                       : Loc.T("Longer burst", "Daha uzun hızlanma");
+            case UpgradeType.Regeneration: return Loc.T("+1 stability\nevery level", "Her seviyede\n+1 kararlılık");
+            case UpgradeType.Insight:
+                return Loc.T("See dust grains and black\nholes before they arrive", "Toz tanelerini ve kara\ndelikleri gelmeden gör");
+            case UpgradeType.CoinRecycler:
+                return Loc.T("Spare electrons \u2192 quanta\n" + OrbsPerRecycledCoin + " electrons = 1 quantum",
+                             "Fazla elektron \u2192 kuanta\n" + OrbsPerRecycledCoin + " elektron = 1 kuantum");
+            case UpgradeType.HealthRecycler:
+                return Loc.T("Spare electrons \u2192 stability\n" + OrbsPerRecycledHeart + " electrons = 1 stability",
+                             "Fazla elektron \u2192 kararlılık\n" + OrbsPerRecycledHeart + " elektron = 1 kararlılık");
+            case UpgradeType.FireRate: return Loc.Pct(fireRatePerUpgrade) + Loc.T(" emission rate", " yayım hızı");
             case UpgradeType.TurretRange:
-                return "Turrets aim and shoot\n+" + turretRangePerUpgrade.ToString("0.#") + " units further\n" + LevelStep(upgTurretRange, maxTurretRangeUpgrades);
-            default: return "Each ball takes\none more hit\n(" + (1 + upgBallArmor) + " → " + (2 + upgBallArmor) + " hits, max " + (1 + BallArmorCap) + ")";
+                return "+" + turretRangePerUpgrade.ToString("0.#") + Loc.T(" radiation range", " radyasyon menzili");
+            default: return Loc.T("Electrons survive\n+1 more hit", "Elektronlar +1 vuruşa\ndaha dayanır");
+        }
+    }
+
+    /// <summary>Description for the Index (general, not about the current run).</summary>
+    public string IndexDescription(UpgradeType u)
+    {
+        switch (u)
+        {
+            case UpgradeType.Heal: return Loc.T("Fully restore\nyour stability", "Kararlılığını\ntamamen yeniler");
+            case UpgradeType.Repel: return Loc.T("Getting hit blasts\nenemies & dust away", "Hasar alınca düşmanları\nve tozu iter");
+            case UpgradeType.Booster: return Loc.T("Getting hit gives\na burst of speed", "Hasar alınca\nani hız kazan");
+            case UpgradeType.Challenger: return HydrogenText(Loc.T("Earlier picks refunded", "Önceki seçimler iade edilir"));
+            case UpgradeType.Sluggish: return ArgonText(0);
+            default: return UpgradeDescription(u);
+        }
+    }
+
+    /// <summary>How many of this upgrade the run owns (characters: 1 if it is the run's character).</summary>
+    public int OwnedCount(UpgradeType u)
+    {
+        switch (u)
+        {
+            case UpgradeType.MaxHealth: return upgMaxHealth;
+            case UpgradeType.Speed: return upgSpeed;
+            case UpgradeType.Thrust: return upgThrust;
+            case UpgradeType.Torque: return upgTorque;
+            case UpgradeType.BallArmor: return character == Character.Challenger ? 0 : upgBallArmor;
+            case UpgradeType.BallSize: return character == Character.Challenger ? 0 : upgBallSize;
+            case UpgradeType.PickupRange: return upgPickupRange;
+            case UpgradeType.Repel: return upgRepel;
+            case UpgradeType.Booster: return upgBooster;
+            case UpgradeType.Regeneration: return upgRegen;
+            case UpgradeType.FireRate: return upgFireRate;
+            case UpgradeType.TurretRange: return upgTurretRange;
+            case UpgradeType.Insight: return upgInsight;
+            case UpgradeType.CoinRecycler: return upgCoinRecycler;
+            case UpgradeType.HealthRecycler: return upgHealthRecycler;
+            case UpgradeType.Challenger: return character == Character.Challenger ? 1 : 0;
+            case UpgradeType.Sluggish: return character == Character.Sluggish ? 1 : 0;
+            case UpgradeType.Spaceship: return character == Character.Spaceship ? 1 : 0;
+            default: return 0;
+        }
+    }
+
+    /// <summary>
+    /// For upgrades bought repeatedly: how many are owned and the most allowed (-1 = no limit).
+    /// False for one-off cards (repair, rares, characters).
+    /// </summary>
+    public bool UpgradeLevels(UpgradeType u, out int owned, out int cap)
+    {
+        owned = OwnedCount(u);
+        int tt = ThrustTorqueCap == int.MaxValue ? -1 : ThrustTorqueCap;
+        switch (u)
+        {
+            case UpgradeType.MaxHealth:
+            case UpgradeType.Speed: cap = -1; return true;
+            case UpgradeType.Thrust:
+            case UpgradeType.Torque: cap = tt; return true;
+            case UpgradeType.BallArmor: cap = BallArmorCap; return true;
+            case UpgradeType.BallSize: cap = maxBallSizeUpgrades; return true;
+            case UpgradeType.PickupRange: cap = maxPickupRangeUpgrades; return true;
+            case UpgradeType.Repel: cap = maxRepelUpgrades; return true;
+            case UpgradeType.Booster: cap = maxBoosterUpgrades; return true;
+            case UpgradeType.FireRate: cap = maxFireRateUpgrades; return true;
+            case UpgradeType.TurretRange: cap = maxTurretRangeUpgrades; return true;
+            default: cap = 0; return false;
         }
     }
 
@@ -847,11 +879,9 @@ public class GameManager : MonoBehaviour
             for (int i = 0, n = OrbsForLevel(level); i < n; i++)
                 orbs.Add(SpawnPickup(PickupKind.Orb, orbMinDistance, orbMaxDistance));
 
-        savedLevel = level;
-        bestLevel = Mathf.Max(bestLevel, level);
-        PlayerPrefs.SetInt(LevelKey, savedLevel);
-        PlayerPrefs.SetInt(BestKey, bestLevel);
-        PlayerPrefs.Save();
+        levelStartCoinProgress = coinRecycleProgress;
+        levelStartHeartProgress = heartRecycleProgress;
+        SetBest(level);
 
         Sfx.Play("start");
         SetState(State.Playing);
@@ -865,22 +895,17 @@ public class GameManager : MonoBehaviour
         AddShake(0.3f);
         ParticleBursts.Burst(pendulum.PivotPosition, Pickup.Gold, 40, 9f, 0.35f, 1f);
 
-        savedLevel = level + 1;
-        bestLevel = Mathf.Max(bestLevel, savedLevel);
-        PlayerPrefs.SetInt(LevelKey, savedLevel);
-        PlayerPrefs.SetInt(BestKey, bestLevel);
-        PlayerPrefs.Save();
+        SetBest(level + 1);
 
         SetState(State.LevelComplete);
     }
 
     void EndGame()
     {
+        // Out of stability: the core shakes apart and explodes; the game over screen follows.
         spawner.StopSpawning();
-        pendulum.Kill();
-        AddShake(0.9f);
-        Sfx.Play("over");
-        SetState(State.GameOver);
+        pendulum.BeginMeltdown();
+        SetState(State.Dying);
     }
 
     void SetPaused(bool paused)
@@ -1036,12 +1061,12 @@ public class GameManager : MonoBehaviour
                 lives = Mathf.Min(MaxHealth, lives + 1);
                 Sfx.Play("orb");
                 ParticleBursts.Burst(pendulum.PivotPosition, Pickup.HeartColor, 24, 6f, 0.3f, 0.8f);
-                GameUI.FloatText(at, "+1 HEART", Pickup.HeartColor, 26f);
+                GameUI.FloatText(at, Loc.T("+1 STABILITY", "+1 KARARLILIK"), Pickup.HeartColor, 26f);
             }
             else
             {
                 Sfx.Play("recycle");
-                GameUI.FloatText(at, "RECYCLED  " + heartRecycleProgress + "/" + OrbsPerRecycledHeart, Pickup.HeartColor);
+                GameUI.FloatText(at, heartRecycleProgress + " / " + OrbsPerRecycledHeart, Pickup.HeartColor);
             }
         }
         else if (HasCoinRecycler)
@@ -1053,22 +1078,21 @@ public class GameManager : MonoBehaviour
                 levelCoins++;
                 Sfx.Play("coin");
                 ParticleBursts.Burst(at, Pickup.CoinColor, 24, 6f, 0.3f, 0.8f);
-                GameUI.FloatText(at, "+1 COIN", Pickup.CoinColor, 26f);
+                GameUI.FloatText(at, Loc.T("+1 QUANTUM", "+1 KUANTUM"), Pickup.CoinColor, 26f);
             }
             else
             {
                 Sfx.Play("recycle");
-                GameUI.FloatText(at, "RECYCLED  " + coinRecycleProgress + "/" + OrbsPerRecycledCoin, Pickup.CoinColor);
+                GameUI.FloatText(at, coinRecycleProgress + " / " + OrbsPerRecycledCoin, Pickup.CoinColor);
             }
         }
-        SaveUpgrades();
     }
 
     /// <summary>An orb touched with no room for it and nothing to recycle it into.</summary>
     public void WarnOrbitalsFull(Vector2 at)
     {
         Sfx.Play("full", 0.7f);
-        GameUI.FloatText(at, "ORBITALS FULL", new Color(1f, 0.25f, 0.25f), 24f);
+        GameUI.FloatText(at, Loc.T("ORBITALS FULL", "YÖRÜNGELER DOLU"), new Color(1f, 0.25f, 0.25f), 24f);
     }
 
     void OnPickupCollected(Pickup p)
@@ -1155,12 +1179,8 @@ public class GameManager : MonoBehaviour
         switch (state)
         {
             case State.Title:
-                if (kb != null && (kb.digit1Key.wasPressedThisFrame || kb.numpad1Key.wasPressedThisFrame))
-                {
-                    ResetUpgrades();   // starting over = fresh run
-                    StartLevel(1, true);
-                }
-                else if (StartPressed()) StartLevel(savedLevel, true);
+                if (OverlayOpen) break;
+                if (ConfirmPressed()) NewRun();
                 break;
             case State.Playing:
                 levelTime += Time.deltaTime;
@@ -1177,8 +1197,10 @@ public class GameManager : MonoBehaviour
                 }
                 break;
             case State.Paused:
-                if (kb != null && kb.rKey.wasPressedThisFrame) { SetPaused(false); StartLevel(level, true); }
-                else if (PausePressed() || StartPressed()) SetPaused(false);
+                if (OverlayOpen) break;
+                if (kb != null && kb.rKey.wasPressedThisFrame) RetryLevel();
+                else if (kb != null && kb.mKey.wasPressedThisFrame) QuitToTitle();
+                else if (PausePressed() || ConfirmPressed()) Resume();
                 break;
             case State.LevelComplete:
                 if (stateTime > levelCompleteDelay)
@@ -1187,9 +1209,26 @@ public class GameManager : MonoBehaviour
                     else StartLevel(level + 1, false);
                 }
                 break;
-            case State.GameOver:
-                if (stateTime > 0.8f && (StartPressed() || (kb != null && kb.rKey.wasPressedThisFrame))) StartLevel(level, true);
+            case State.Dying:
+                if (!pendulum.IsAlive && stateTime > pendulum.meltdownTime + 1f)
+                {
+                    Sfx.Play("over", 0.8f);
+                    SetState(State.GameOver);
+                }
                 break;
+            case State.GameOver:
+                if (stateTime > 0.8f && kb != null)
+                {
+                    if (kb.rKey.wasPressedThisFrame || ConfirmPressed()) RetryLevel();
+                    else if (kb.nKey.wasPressedThisFrame) NewRun();
+                }
+                break;
+        }
+
+        if (music != null)
+        {
+            music.volume = musicVolume;
+            music.muffled = state == State.Paused;
         }
 
         if (state != State.Paused && state != State.Upgrade)
@@ -1213,16 +1252,59 @@ public class GameManager : MonoBehaviour
         UpdateBackground(udt);
     }
 
-    static bool StartPressed()
+    /// <summary>Keyboard confirm (mouse / touch go through the on-screen buttons).</summary>
+    static bool ConfirmPressed()
     {
         var kb = Keyboard.current;
-        if (kb != null && (kb.spaceKey.wasPressedThisFrame || kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame))
-            return true;
-        var m = Mouse.current;
-        if (m != null && m.leftButton.wasPressedThisFrame) return true;
-        var ts = Touchscreen.current;
-        if (ts != null && ts.primaryTouch.press.wasPressedThisFrame) return true;
-        return false;
+        return kb != null && (kb.spaceKey.wasPressedThisFrame || kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame);
+    }
+
+    // ------------------------------------------------------ menu actions (UI buttons)
+
+    /// <summary>Fresh run from level 1 with no upgrades.</summary>
+    public void NewRun()
+    {
+        if (state != State.Title && state != State.GameOver && state != State.Paused) return;
+        Time.timeScale = 1f;
+        ResetUpgrades();
+        StartLevel(1, true);
+    }
+
+    /// <summary>Replay the current level from the start, keeping the run's upgrades.</summary>
+    public void RetryLevel()
+    {
+        if (state != State.GameOver && state != State.Paused) return;
+        Time.timeScale = 1f;
+        coinRecycleProgress = levelStartCoinProgress;
+        heartRecycleProgress = levelStartHeartProgress;
+        StartLevel(level, true);
+    }
+
+    public void Pause() => SetPaused(true);
+    public void Resume() => SetPaused(false);
+
+    /// <summary>Abandon the run and go back to the title screen.</summary>
+    public void QuitToTitle()
+    {
+        if (state != State.Paused && state != State.GameOver) return;
+        Time.timeScale = 1f;
+        hitStop = 0f;
+        spawner.ClearAll(false);
+        ClearPickups();
+        ClearHazards();
+        ParticleBursts.ClearAll();
+        ResetUpgrades();
+        pendulum.ResetState(true);
+        lives = MaxHealth;
+        SetState(State.Title);
+    }
+
+    public static bool CanQuitApp =>
+        !Application.isEditor && Application.platform != RuntimePlatform.WebGLPlayer;
+
+    public void QuitApp()
+    {
+        if (CanQuitApp) Application.Quit();
     }
 
     static bool PausePressed()

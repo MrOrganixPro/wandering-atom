@@ -5,11 +5,12 @@ public enum PickupKind { Star, Orb, Coin, Heart }
 
 /// <summary>
 /// A collectible:
-///   Star  - level goal
-///   Orb   - adds an orbiting ball
-///   Coin  - one upgrade choice at the end of the level
+///   Star  - a photon: the level goal
+///   Orb   - an electron: joins your orbitals
+///   Coin  - quanta: one upgrade choice at the end of the level (Rutherford atom with
+///           sparks racing around its three orbits)
 ///   Heart - restores one health (rare)
-/// Collected by touching it with the thruster or any of its balls.
+/// Collected by touching it with the core or any of its electrons.
 /// While off-screen, an icon sits on the screen edge pointing toward it and grows
 /// as the player gets closer, until the pickup itself comes into view.
 /// Runs after GameManager so the indicator uses this frame's camera position.
@@ -29,6 +30,7 @@ public class Pickup : MonoBehaviour
 
     Action<Pickup> onCollected;
     Transform body;
+    Transform[] sparks;   // quanta: one per orbit
     SpriteRenderer glow, ring, indIcon, indGlow, indArrow;
     Color color;
     Sprite sprite;
@@ -55,10 +57,10 @@ public class Pickup : MonoBehaviour
     {
         switch (k)
         {
-            case PickupKind.Star: return ProcSprites.Star;
-            case PickupKind.Coin: return ProcSprites.Coin;
-            case PickupKind.Heart: return ProcSprites.Heart;
-            default: return ProcSprites.Ball;
+            case PickupKind.Star: return ProcSprites.Photon;
+            case PickupKind.Coin: return ProcSprites.Quanta;
+            case PickupKind.Heart: return ProcSprites.Stability;
+            default: return ProcSprites.Electron;
         }
     }
 
@@ -73,7 +75,7 @@ public class Pickup : MonoBehaviour
         switch (kind)
         {
             case PickupKind.Star: radius = 0.35f; bodyScale = 2.3f; indicatorMax = 0.85f; break;
-            case PickupKind.Coin: radius = 0.26f; bodyScale = 2.1f; indicatorMax = 0.5f; break;
+            case PickupKind.Coin: radius = 0.28f; bodyScale = 2.6f; indicatorMax = 0.55f; break;
             case PickupKind.Heart: radius = 0.28f; bodyScale = 2.3f; indicatorMax = 0.55f; break;
             default: radius = 0.28f; bodyScale = 2.1f; indicatorMax = 0.55f; break;
         }
@@ -81,6 +83,29 @@ public class Pickup : MonoBehaviour
 
         glow = Make("Glow", ProcSprites.Glow, new Color(color.r, color.g, color.b, 0.45f), 15, radius * 5.5f);
         body = Make("Body", sprite, color, 16, bodyScale).transform;
+        if (kind == PickupKind.Coin)
+        {
+            // One spark per orbit, racing around it.
+            sparks = new Transform[3];
+            for (int i = 0; i < sparks.Length; i++)
+            {
+                var sp = new GameObject("Spark" + i).transform;
+                sp.SetParent(body, false);
+                var g = sp.gameObject.AddComponent<SpriteRenderer>();
+                g.sprite = ProcSprites.Glow;
+                g.color = new Color(1f, 0.95f, 0.75f, 0.9f);
+                g.sortingOrder = 17;
+                sp.localScale = Vector3.one * 0.32f;
+                var dot = new GameObject("Dot").transform;
+                dot.SetParent(sp, false);
+                dot.localScale = Vector3.one * 0.35f;
+                var d = dot.gameObject.AddComponent<SpriteRenderer>();
+                d.sprite = ProcSprites.Ball;
+                d.color = Color.white;
+                d.sortingOrder = 18;
+                sparks[i] = sp;
+            }
+        }
         if (kind == PickupKind.Orb || kind == PickupKind.Heart)
             ring = Make("Ring", ProcSprites.Ring, new Color(1f, 1f, 1f, 0.5f), 17, radius * 3f);
 
@@ -133,8 +158,17 @@ public class Pickup : MonoBehaviour
                 body.localScale = Vector3.one * bodyScale * (1f + 0.08f * Mathf.Sin(age * 4f));
                 break;
             case PickupKind.Coin:
-                // Spinning coin: squash horizontally.
-                body.localScale = new Vector3(bodyScale * Mathf.Max(0.12f, Mathf.Abs(Mathf.Cos(age * 3f))), bodyScale, 1f);
+                // Rutherford atom: turns slowly; a spark races around each orbit.
+                body.localRotation = Quaternion.Euler(0f, 0f, age * 20f);
+                body.localScale = Vector3.one * bodyScale * (1f + 0.05f * Mathf.Sin(age * 4f));
+                for (int i = 0; i < sparks.Length; i++)
+                {
+                    float tilt = i * 60f * Mathf.Deg2Rad;
+                    float th = age * (3.2f + 0.5f * i) + i * 2.1f;
+                    Vector2 e = new Vector2(Mathf.Cos(th) * 0.45f, Mathf.Sin(th) * 0.15f);
+                    sparks[i].localPosition = new Vector3(e.x * Mathf.Cos(tilt) - e.y * Mathf.Sin(tilt),
+                                                          e.x * Mathf.Sin(tilt) + e.y * Mathf.Cos(tilt), 0f);
+                }
                 break;
             case PickupKind.Heart:
                 float beat = Mathf.Pow(Mathf.Max(0f, Mathf.Sin(age * 6f)), 8f);

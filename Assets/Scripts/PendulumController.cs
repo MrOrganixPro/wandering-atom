@@ -3,7 +3,8 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 /// <summary>
-/// The player: a thruster pod, with balls orbiting it on ropes.
+/// The player: an atom's nucleus (the core), with electrons (balls) held on its orbitals.
+/// It moves by a pulse drive: wavefronts of energy pushed out behind it.
 ///
 /// Thruster: press on it and drag (like a joystick), or use WASD / arrow keys, to
 /// fly. It has momentum and drifts to a stop. Enemies that reach the thruster cost a life.
@@ -28,6 +29,10 @@ public class PendulumController : MonoBehaviour
     public float coreRadius = 0.26f;
     public Color podColor = new Color(0.9f, 0.82f, 0.62f);
     public Color thrusterColor = new Color(1f, 0.55f, 0.15f);
+    [Tooltip("Color of the core's pulse drive (the energy wavefronts behind it).")]
+    public Color driveColor = new Color(0.6f, 0.88f, 1f);
+    [Tooltip("Seconds the core shakes unstably after losing all stability, before it explodes.")]
+    public float meltdownTime = 1.2f;
     [Tooltip("Base acceleration (upgradable).")]
     public float thrustAcceleration = 10f;
     [Tooltip("How quickly the thruster drifts to a stop.")]
@@ -95,6 +100,10 @@ public class PendulumController : MonoBehaviour
     public float repelTurnPerLevel = 0.1f;
     public float repelCooldown = 0.5f;
     public Color repelColor = new Color(0.75f, 0.9f, 1f);
+    [Tooltip("Repel: how heavy an average asteroid is compared to an enemy (it is pushed by force / mass; bigger rocks are heavier).")]
+    public float asteroidRepelMass = 6f;
+    [Tooltip("Asteroids: an orb that grazes an asteroid takes one hit, then is safe from asteroids for this many seconds.")]
+    public float asteroidHitCooldown = 0.6f;
     [Tooltip("Emergency booster: seconds of boost at level 1, and added per extra level.")]
     public float boostDuration = 1.5f;
     public float boostDurationPerLevel = 0.35f;
@@ -121,6 +130,7 @@ public class PendulumController : MonoBehaviour
 
     class Turret
     {
+        public SpriteRenderer symbol;
         public GameObject root;
         public Transform mount, barrel;
         public SpriteRenderer tube, muzzle, hub, glow;
@@ -131,6 +141,7 @@ public class PendulumController : MonoBehaviour
     {
         public int shell, hp;
         public float damageFlash;
+        public float rockTimer;   // asteroid hit cooldown
         public SpriteRenderer armor;
         public Vector2 pos, vel;
         public bool taut = true;
@@ -151,8 +162,9 @@ public class PendulumController : MonoBehaviour
     /// <summary>Ball diameter including the Bigger Balls upgrade.</summary>
     float BallWorldSize => ballSize * ballScale;
     public bool IsBoosting => boostTimer > 0f;
-    public bool CanBeHit => alive && invulTimer <= 0f;
+    public bool CanBeHit => alive && !meltingDown && invulTimer <= 0f;
     public bool IsAlive => alive;
+    public bool IsMeltingDown => meltingDown;
     public bool IsDragging => dragSource != DragSource.None;
     public int BallCount => balls.Count;
     public int ShellTotal => shellCapacities.Length;
@@ -182,6 +194,8 @@ public class PendulumController : MonoBehaviour
     Vector2 thrust;
     float invulTimer, hitFlash;
     bool alive = true;
+    bool meltingDown;          // out of stability: shaking apart, about to explode
+    float meltdownT, crackleTimer, sparkTimer;
 
     DragSource dragSource = DragSource.None;
     int dragTouchId = -1;
@@ -191,6 +205,11 @@ public class PendulumController : MonoBehaviour
     readonly List<Ball> shellScratch = new List<Ball>();
 
     Transform pod, ropeRoot, thruster;
+    SpriteRenderer[] pulses;
+    Vector2[] pulseVel;
+    float[] pulseAge;
+    int pulseNext;
+    float pulseTimer;
     SpriteRenderer podBody, podGlow, grabHint, flame, flameCore, headingArrow, headingGlow;
     SpriteRenderer[] shellRings = new SpriteRenderer[0];
     int[] baseShellCaps;
@@ -249,7 +268,7 @@ public class PendulumController : MonoBehaviour
         return shellLengths[shellLengths.Length - 1] + (s - shellLengths.Length + 1);
     }
 
-    Color ShellColor(int s)
+    public Color ShellColor(int s)
     {
         if (shellColors == null || shellColors.Length == 0) return Pickup.OrbColor;
         return shellColors[Mathf.Min(s + shellColorOffset, shellColors.Length - 1)];
@@ -288,18 +307,25 @@ public class PendulumController : MonoBehaviour
 
         thruster = new GameObject("Thruster").transform;
         thruster.SetParent(pod, false);
-        flame = NewSprite("Flame", thruster, ProcSprites.Glow, Color.clear, 3, 1f);
-        flameCore = NewSprite("FlameCore", thruster, ProcSprites.Glow, Color.clear, 3, 1f);
-        var nozzle = NewSprite("Nozzle", thruster, ProcSprites.Ball, new Color(0.35f, 0.35f, 0.4f), 4, 1f);
-        nozzle.transform.localPosition = new Vector3(-0.2f, 0f, 0f);
-        nozzle.transform.localScale = new Vector3(0.24f, 0.2f, 1f);
+        // Drive: a soft energy wake behind the core (no flame, no nozzle: it's a nucleus).
+        flame = NewSprite("DriveWake", thruster, ProcSprites.Glow, Color.clear, 3, 1f);
+        flameCore = NewSprite("DriveSpot", thruster, ProcSprites.Glow, Color.clear, 6, 1f);
 
-        podGlow = NewSprite("PodGlow", pod, ProcSprites.Glow, new Color(podColor.r, podColor.g, podColor.b, 0.35f), 4, 1.3f);
-        podBody = NewSprite("PodBody", pod, ProcSprites.Ball, podColor, 5, coreRadius * 2.1f);
-        NewSprite("PodCore", pod, ProcSprites.Ball, new Color(0.25f, 0.22f, 0.2f), 6, coreRadius * 0.7f);
+        podGlow = NewSprite("CoreGlow", pod, ProcSprites.Glow, new Color(podColor.r, podColor.g, podColor.b, 0.35f), 4, 1.3f);
+        podBody = NewSprite("Nucleus", pod, ProcSprites.Nucleus, podColor, 5, coreRadius * 2.3f);
 
-        // World-space root for balls/ropes (not parented to the thruster, so balls can lag and swing).
+        // World-space root for electrons and their bonds (not parented to the core, so they can lag and swing).
         ropeRoot = new GameObject("PendulumBalls").transform;
+
+        // Pulse drive wavefronts (pooled, world space).
+        pulses = new SpriteRenderer[8];
+        pulseVel = new Vector2[pulses.Length];
+        pulseAge = new float[pulses.Length];
+        for (int i = 0; i < pulses.Length; i++)
+        {
+            pulses[i] = NewSprite("DrivePulse" + i, ropeRoot, ProcSprites.Ring, Color.clear, 3, 1f);
+            pulseAge[i] = 99f;
+        }
 
         // Heading arrow: points where the thruster is moving.
         headingGlow = NewSprite("HeadingGlow", pod, ProcSprites.Glow, Color.clear, 11, 0.7f);
@@ -338,8 +364,7 @@ public class PendulumController : MonoBehaviour
         for (int i = 0; i < count; i++)
         {
             bool face = i % 2 == 1;
-            b.links[i] = NewSprite("Link" + i, b.root.transform, ProcSprites.Link,
-                face ? chainColor : chainColor * 0.8f, face ? 1 : 0, 1f);
+            b.links[i] = NewSprite("Bond" + i, b.root.transform, ProcSprites.Glow, Color.clear, face ? 1 : 0, 1f);
         }
 
         b.bob = new GameObject("Bob").transform;
@@ -347,7 +372,7 @@ public class PendulumController : MonoBehaviour
         b.bob.position = pos;
         float size = BallWorldSize;
         b.glow = NewSprite("Glow", b.bob, ProcSprites.Glow, new Color(c.r, c.g, c.b, 0.5f), 9, size * 2.8f);
-        b.body = NewSprite("Body", b.bob, ProcSprites.Ball, c, 10, size);
+        b.body = NewSprite("Body", b.bob, ProcSprites.Electron, c, 10, size);
         b.armor = NewSprite("Armor", b.bob, ProcSprites.Ring, Color.clear, 11, size * 1.45f);
         b.hp = Mathf.Max(1, ballMaxHits);
 
@@ -380,8 +405,9 @@ public class PendulumController : MonoBehaviour
         repelTimer -= dt;
         boostTimer -= dt;
 
-        if (alive && Time.timeScale > 0f) ReadInput();   // no input while paused
-        else if (!alive) { thrust = Vector2.zero; EndDrag(); }
+        if (alive && !meltingDown && Time.timeScale > 0f) ReadInput();   // no input while paused
+        else if (!alive || meltingDown) { thrust = Vector2.zero; EndDrag(); }
+        if (meltingDown) pivotVel *= Mathf.Exp(-4f * dt);   // grinds to a halt while it comes apart
 
         Simulate(dt);
         UpdateTurrets(dt);
@@ -392,6 +418,91 @@ public class PendulumController : MonoBehaviour
             UpdateChain(b);
         }
         UpdateVisuals(dt);
+        if (meltingDown) UpdateMeltdown(dt);
+    }
+
+    /// <summary>Out of stability: the nucleus starts to shake apart (see UpdateMeltdown, Explode).</summary>
+    public void BeginMeltdown()
+    {
+        if (!alive || meltingDown) return;
+        meltingDown = true;
+        meltdownT = 0f;
+        crackleTimer = sparkTimer = 0f;
+        EndDrag();
+        Sfx.Play("meltdown", 0.9f);
+    }
+
+    void UpdateMeltdown(float dt)
+    {
+        meltdownT += dt;
+        float k = Mathf.Clamp01(meltdownT / Mathf.Max(0.1f, meltdownTime));
+        Vector2 c = PivotPosition;
+
+        // Violent, growing shake; the nucleus throbs and flickers white / red.
+        pod.localPosition = (Vector3)(Random.insideUnitCircle * (0.04f + 0.16f * k * k));
+        float throb = 1f + (0.06f + 0.22f * k) * Mathf.Abs(Mathf.Sin(meltdownT * (14f + 40f * k)));
+        podBody.transform.localScale *= throb;
+        bool hot = Mathf.Repeat(meltdownT * (5f + 22f * k), 1f) > 0.5f;
+        podBody.color = Color.Lerp(podColor, hot ? Color.white : new Color(1f, 0.3f, 0.25f), 0.3f + 0.65f * k);
+        podGlow.transform.localScale = Vector3.one * (1.3f + 2.2f * k);
+        podGlow.color = new Color(1f, 0.55f, 0.4f, 0.35f + 0.5f * k);
+
+        // Bits of energy spitting off, faster and faster.
+        sparkTimer -= dt;
+        if (sparkTimer <= 0f)
+        {
+            sparkTimer = Mathf.Lerp(0.06f, 0.015f, k);
+            Vector2 dir = Random.insideUnitCircle.normalized;
+            Color sc = Color.Lerp(podColor, Color.white, Random.value);
+            sc.a = 0.85f;
+            ParticleBursts.Emit(c + dir * coreRadius, dir * Random.Range(2f, 3f + 6f * k), sc, Random.Range(0.06f, 0.14f), 0.35f, 3f);
+        }
+        crackleTimer -= dt;
+        if (crackleTimer <= 0f)
+        {
+            crackleTimer = Mathf.Lerp(0.28f, 0.08f, k);
+            Sfx.Play("snap", 0.25f + 0.45f * k);
+        }
+
+        // The electrons feel it too.
+        foreach (var b in balls) b.snapFlash = Mathf.Max(b.snapFlash, k * Random.value * 0.8f);
+
+        if (GameManager.Instance != null) GameManager.Instance.AddShake(0.1f + 0.25f * k);
+        if (meltdownT >= meltdownTime) Explode();
+    }
+
+    /// <summary>The core blows apart: a flash and shockwave, every electron is blasted away, and
+    /// anything nearby (enemies, dust grains) is shoved back.</summary>
+    void Explode()
+    {
+        meltingDown = false;
+        alive = false;
+        EndDrag();
+        pod.localPosition = Vector3.zero;
+        Vector2 c = PivotPosition;
+
+        ParticleBursts.Burst(c, podColor, 60, 12f, 0.4f, 1.2f);
+        ParticleBursts.Burst(c, Color.white, 30, 9f, 0.3f, 0.7f);
+        ParticleBursts.Burst(c, driveColor, 24, 7f, 0.3f, 0.9f);
+        ShockRing.Spawn(c, 6f, Color.Lerp(podColor, Color.white, 0.4f));
+        ShockRing.Spawn(c, 3.5f, Color.white);
+        Sfx.Play("explode");
+        if (GameManager.Instance != null) GameManager.Instance.AddShake(1.1f);
+
+        float size = BallWorldSize;
+        foreach (var b in balls)
+        {
+            Vector2 d = b.pos - c;
+            Vector2 dir = d.sqrMagnitude > 1e-4f ? d.normalized : Random.insideUnitCircle.normalized;
+            Vector2 vel = dir * Random.Range(8f, 12f) + (b.vel - pivotVel) * 0.3f;
+            Debris.Spawn(b.pos, vel, ProcSprites.Electron, ShellColor(b.shell), size, Random.Range(1.3f, 1.9f));
+        }
+        ClearBalls(false);
+        ClearTurrets(true);
+
+        foreach (var e in EnemyMover.All) e.Repel(c, 7f, 14f, 1f);
+        foreach (var h in Hazard.All) h.Repel(c, 7f, 14f, asteroidRepelMass);
+        pod.gameObject.SetActive(false);
     }
 
     void UpdateHeadingArrow()
@@ -578,7 +689,7 @@ public class PendulumController : MonoBehaviour
             Vector2 n = (b.pos - pivot).normalized;
             for (int i = 0; i < 4; i++)
                 ParticleBursts.Emit(b.pos + n * BallRadius, (n + Random.insideUnitCircle * 0.6f) * 2f,
-                    new Color(chainColor.r, chainColor.g, chainColor.b, 0.8f), 0.12f, 0.25f, 5f);
+                    new Color(ShellColor(b.shell).r, ShellColor(b.shell).g, ShellColor(b.shell).b, 0.8f), 0.12f, 0.25f, 5f);
         }
         // One sound for the whole frame, throttled, slightly louder when several snap together.
         if (snapped > 0 && Time.time >= nextSnapSound)
@@ -704,7 +815,7 @@ public class PendulumController : MonoBehaviour
             Transform lt = b.links[i].transform;
             lt.position = pivot + p;
             lt.rotation = Quaternion.Euler(0f, 0f, ang);
-            lt.localScale = new Vector3(i % 2 == 1 ? 0.15f : 0.06f, linkLen, 1f);
+            lt.localScale = Vector3.one * (i % 2 == 1 ? 0.13f : 0.08f);   // dotted field strand
         }
     }
 
@@ -722,6 +833,9 @@ public class PendulumController : MonoBehaviour
             body.a = Mathf.Repeat(invulTimer * 10f, 1f) > 0.4f ? 1f : 0.25f;
         }
         podBody.color = body;
+        float tremble = 1f + 0.035f * Mathf.Sin(Time.time * 23f) + 0.02f * Mathf.Sin(Time.time * 37f);
+        podBody.transform.localScale = Vector3.one * coreRadius * 2.3f * tremble;
+        podBody.transform.localRotation = Quaternion.Euler(0f, 0f, Time.time * 18f);
         podGlow.color = new Color(1f, Mathf.Lerp(0.85f, 0.4f, hitFlash), Mathf.Lerp(0.5f, 0.4f, hitFlash),
             0.3f + 0.1f * Mathf.Sin(Time.time * 3f) + 0.4f * hitFlash);
 
@@ -750,6 +864,7 @@ public class PendulumController : MonoBehaviour
         {
             b.snapFlash = Mathf.MoveTowards(b.snapFlash, 0f, dt * 5f);
             b.damageFlash = Mathf.MoveTowards(b.damageFlash, 0f, dt * 4f);
+            b.rockTimer -= dt;
             float speed01 = (b.vel - pivotVel).magnitude / Mathf.Max(1f, maxSpeed);
             Color c = ShellColor(b.shell);
             b.body.color = Color.Lerp(c, Color.white, b.damageFlash);
@@ -769,12 +884,13 @@ public class PendulumController : MonoBehaviour
             b.glow.color = g;
             b.glow.transform.localScale = Vector3.one * size * (2.5f + 0.8f * speed01);
 
-            Color chain = Color.Lerp(chainColor * (b.taut ? 1f : 0.85f), Color.white, b.snapFlash * 0.7f);
+            // Bond to the core: a faint dotted strand in the shell's color that shimmers along its length.
+            Color bond = Color.Lerp(c, Color.white, b.snapFlash * 0.7f);
+            float baseA = (b.taut ? 0.4f : 0.2f) + 0.5f * b.snapFlash;
             for (int i = 0; i < b.links.Length; i++)
             {
-                Color lc = i % 2 == 1 ? chain : chain * 0.8f;
-                lc.a = 1f;
-                b.links[i].color = lc;
+                float shimmer = 0.6f + 0.4f * Mathf.Sin(Time.time * 6f - i * 0.9f);
+                b.links[i].color = new Color(bond.r, bond.g, bond.b, baseA * shimmer);
             }
         }
 
@@ -794,32 +910,60 @@ public class PendulumController : MonoBehaviour
             thruster.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(pivotVel.y, pivotVel.x) * Mathf.Rad2Deg);
         float drive = Mathf.Max(power, bk);
 
-        float flicker = 0.85f + 0.15f * Mathf.Sin(Time.time * 47f) + 0.1f * Random.value;
-        float len = (0.18f + 0.8f * drive) * flicker * (1f + 0.6f * bk);
-        float a = drive > 0.02f ? 0.55f + 0.4f * drive : 0.18f;
+        float a = drive > 0.02f ? 0.45f + 0.45f * drive : 0.12f;
         if (!alive) a = 0f;
-        Color fc = Color.Lerp(thrusterColor, boostColor, bk);
-        Color core = Color.Lerp(new Color(1f, 0.95f, 0.7f), Color.white, bk);
+        Color fc = Color.Lerp(driveColor, boostColor, bk);
+        Vector2 back = -(Vector2)thruster.right;
 
-        flame.transform.localPosition = new Vector3(-0.28f - len * 0.4f, 0f, 0f);
-        flame.transform.localScale = new Vector3(len * 1.2f, 0.26f + 0.1f * drive + 0.1f * bk, 1f);
-        flame.color = new Color(fc.r, fc.g, fc.b, a);
-        flameCore.transform.localPosition = new Vector3(-0.26f - len * 0.2f, 0f, 0f);
-        flameCore.transform.localScale = new Vector3(len * 0.6f, 0.15f, 1f);
-        flameCore.color = new Color(core.r, core.g, core.b, a);
+        // Soft wake hugging the back of the nucleus, and a bright spot where the drive pushes off.
+        float len = (0.3f + 0.7f * drive) * (1f + 0.5f * bk);
+        flame.transform.localPosition = new Vector3(-0.15f - len * 0.3f, 0f, 0f);
+        flame.transform.localScale = new Vector3(len * 1.1f, 0.55f + 0.25f * drive, 1f);
+        flame.color = new Color(fc.r, fc.g, fc.b, a * 0.55f);
+        flameCore.transform.localPosition = new Vector3(-coreRadius * 0.9f, 0f, 0f);
+        flameCore.transform.localScale = Vector3.one * (0.3f + 0.25f * drive) * (0.9f + 0.1f * Mathf.Sin(Time.time * 30f));
+        flameCore.color = new Color(1f, 1f, 1f, a * 0.8f);
 
+        // Wavefronts: arcs that leave the back of the core, spread and fade.
+        if (alive && drive > 0.05f)
+        {
+            pulseTimer -= dt;
+            if (pulseTimer <= 0f)
+            {
+                pulseTimer = Mathf.Lerp(0.2f, 0.07f, drive) * (bk > 0f ? 0.6f : 1f);
+                int i = pulseNext;
+                pulseNext = (pulseNext + 1) % pulses.Length;
+                pulseAge[i] = 0f;
+                pulseVel[i] = pivotVel * 0.3f + back * (2.5f + 3.5f * drive);
+                pulses[i].transform.position = PivotPosition + back * (coreRadius + 0.05f);
+                pulses[i].transform.rotation = thruster.rotation;
+            }
+        }
+        const float life = 0.5f;
+        for (int i = 0; i < pulses.Length; i++)
+        {
+            if (pulseAge[i] >= life) { pulses[i].color = Color.clear; continue; }
+            pulseAge[i] += dt;
+            float k = Mathf.Clamp01(pulseAge[i] / life);
+            Transform t = pulses[i].transform;
+            t.position += (Vector3)(pulseVel[i] * dt);
+            float sz = 0.35f + 0.9f * k;
+            t.localScale = new Vector3(sz * 0.45f, sz, 1f);   // flattened: reads as an arc / wavefront
+            pulses[i].color = new Color(fc.r, fc.g, fc.b, (1f - k) * 0.75f);
+        }
+
+        // A few motes of light in the wake.
         if (alive && drive > 0.05f)
         {
             thrusterEmit -= dt;
             if (thrusterEmit <= 0f)
             {
-                thrusterEmit = Mathf.Lerp(0.05f, 0.015f, drive) * (bk > 0f ? 0.5f : 1f);
-                Vector2 back = -(Vector2)thruster.right;
-                Vector2 origin = PivotPosition + back * (0.3f + len * 0.5f);
-                Vector2 v = pivotVel * 0.5f + back * Random.Range(3f, 6f) * drive + Random.insideUnitCircle * 0.8f;
-                Color c = Color.Lerp(fc, bk > 0f ? Color.white : new Color(1f, 0.9f, 0.5f), Random.value);
+                thrusterEmit = Mathf.Lerp(0.08f, 0.03f, drive) * (bk > 0f ? 0.5f : 1f);
+                Vector2 origin = PivotPosition + back * (coreRadius + 0.1f);
+                Vector2 v = pivotVel * 0.5f + back * Random.Range(2f, 4f) * drive + Random.insideUnitCircle * 0.8f;
+                Color c = Color.Lerp(fc, Color.white, Random.value * 0.6f);
                 c.a = 0.7f;
-                ParticleBursts.Emit(origin, v, c, Random.Range(0.13f, 0.24f), Random.Range(0.25f, 0.45f), 3f);
+                ParticleBursts.Emit(origin, v, c, Random.Range(0.06f, 0.12f), Random.Range(0.25f, 0.45f), 3f);
             }
         }
     }
@@ -878,7 +1022,7 @@ public class PendulumController : MonoBehaviour
     /// <summary>True if the thruster or any ball overlaps the circle (used for collecting pickups).</summary>
     public bool Touches(Vector2 p, float r)
     {
-        if (!alive) return false;
+        if (!alive || meltingDown) return false;
         float rc = r + coreRadius + pickupBonus;
         if ((PivotPosition - p).sqrMagnitude < rc * rc) return true;
         float rb = r + BallRadius + pickupBonus;
@@ -893,7 +1037,7 @@ public class PendulumController : MonoBehaviour
     /// </summary>
     public bool TryAbsorbHit(Vector2 p, float r, Color enemyColor)
     {
-        if (!alive) return false;
+        if (!alive || meltingDown) return false;
         float rb = r + BallRadius;
         for (int i = 0; i < balls.Count; i++)
         {
@@ -969,6 +1113,7 @@ public class PendulumController : MonoBehaviour
         Vector2 c = PivotPosition;
 
         foreach (var e in EnemyMover.All) e.Repel(c, radius, force, turn);
+        foreach (var h in Hazard.All) h.Repel(c, radius, force, asteroidRepelMass);
 
         ShockRing.Spawn(c, radius, repelColor);
         ParticleBursts.Burst(c, repelColor, 26, radius * 2.2f, 0.22f, 0.45f);
@@ -1034,23 +1179,43 @@ public class PendulumController : MonoBehaviour
     }
 
     /// <summary>
-    /// Solid crushing circle (asteroid / gravity-well core). Balls touching it are destroyed
-    /// regardless of armor. The thruster is pushed out, bounced, and takes a hit.
+    /// Solid circle (asteroid / gravity-well core). A well's core destroys balls outright; an
+    /// asteroid bounces them off and costs one hit (armor counts). The thruster is pushed out,
+    /// bounced, and takes a hit.
     /// </summary>
     /// <param name="ejectSpeed">Extra outward speed given to the thruster on contact.</param>
-    public void HazardCircle(Vector2 c, float r, Vector2 hazardVel, Color col, float ejectSpeed)
+    /// <param name="crushBalls">True for a well's core: balls are destroyed regardless of armor.</param>
+    public void HazardCircle(Vector2 c, float r, Vector2 hazardVel, Color col, float ejectSpeed, bool crushBalls = true)
     {
-        if (!alive) return;
+        if (!alive || meltingDown) return;
 
         float rb = r + BallRadius;
-        bool crushed = false;
+        bool hit = false;
         for (int i = balls.Count - 1; i >= 0; i--)
         {
-            if ((balls[i].pos - c).sqrMagnitude >= rb * rb) continue;
-            RemoveBall(i, col);
-            crushed = true;
+            Ball b = balls[i];
+            Vector2 off = b.pos - c;
+            if (off.sqrMagnitude >= rb * rb) continue;
+            if (crushBalls) { RemoveBall(i, col); hit = true; continue; }
+
+            // Asteroid: bounce off the surface, and lose one hit (then a short grace period).
+            float bd = off.magnitude;
+            Vector2 bn = bd > 1e-4f ? off / bd : Vector2.up;
+            b.pos = c + bn * rb;
+            float bvr = Vector2.Dot(b.vel - hazardVel, bn);
+            if (bvr < 0f) b.vel -= bn * bvr * 1.5f;
+            if (b.rockTimer > 0f) continue;
+            b.rockTimer = asteroidHitCooldown;
+            hit = true;
+            if (--b.hp <= 0) RemoveBall(i, col);
+            else
+            {
+                b.damageFlash = 1f;
+                ParticleBursts.Burst(b.pos, col, 10, 4f, 0.2f, 0.4f);
+                Sfx.Play("snap", 0.8f);
+            }
         }
-        if (crushed) OnHitReaction();
+        if (hit) OnHitReaction();
 
         Vector2 rel = PivotPosition - c;
         float d = rel.magnitude;
@@ -1114,9 +1279,11 @@ public class PendulumController : MonoBehaviour
     {
         if (!alive) return;
         alive = false;
+        meltingDown = false;
+        pod.localPosition = Vector3.zero;
         EndDrag();
         ParticleBursts.Burst(PivotPosition, podColor, 40, 10f, 0.35f, 1.1f);
-        ParticleBursts.Burst(PivotPosition, thrusterColor, 20, 7f, 0.3f, 0.8f);
+        ParticleBursts.Burst(PivotPosition, driveColor, 20, 7f, 0.3f, 0.8f);
         ClearBalls(true);
         ClearTurrets(true);
         pod.gameObject.SetActive(false);
@@ -1129,6 +1296,8 @@ public class PendulumController : MonoBehaviour
     public void ResetState(bool hard = true)
     {
         alive = true;
+        meltingDown = false;
+        pod.localPosition = Vector3.zero;
         invulTimer = 0f;
         hitFlash = 0f;
         boostTimer = 0f;
@@ -1200,28 +1369,28 @@ public class PendulumController : MonoBehaviour
         var t = new Turret();
         t.side = 90f + index * 360f / count;   // 2 turrets: left and right of the thrust direction
         Vector2 dir = new Vector2(Mathf.Cos(t.side * Mathf.Deg2Rad), Mathf.Sin(t.side * Mathf.Deg2Rad));
-        Color metal = new Color(0.5f, 0.52f, 0.58f);
+        Color strand = new Color(turretColor.r, turretColor.g, turretColor.b, 0.35f);
 
         t.root = new GameObject("Turret" + index);
         t.root.transform.SetParent(turretRig, false);
 
-        // Strut from the pod out to the turret.
+        // A faint glowing strand from the nucleus out to the emitter.
         float inner = coreRadius * 0.6f;
-        var arm = NewSprite("Arm", t.root.transform, ProcSprites.Pixel, metal, 2, 1f);
+        var arm = NewSprite("Strand", t.root.transform, ProcSprites.Pixel, strand, 2, 1f);
         arm.transform.localPosition = dir * (inner + turretArmLength) * 0.5f;
         arm.transform.localRotation = Quaternion.Euler(0f, 0f, t.side);
-        arm.transform.localScale = new Vector3(turretArmLength - inner, 0.07f, 1f);
+        arm.transform.localScale = new Vector3(turretArmLength - inner, 0.035f, 1f);
 
         t.mount = new GameObject("Mount").transform;
         t.mount.SetParent(t.root.transform, false);
         t.mount.localPosition = dir * turretArmLength;
         t.glow = NewSprite("Glow", t.mount, ProcSprites.Glow, Color.clear, 6, 0.6f);
-        NewSprite("Base", t.mount, ProcSprites.Ball, new Color(0.3f, 0.32f, 0.36f), 7, 0.26f);
+        t.symbol = NewSprite("Trefoil", t.mount, ProcSprites.Trefoil, new Color(turretColor.r, turretColor.g, turretColor.b, 0.85f), 7, 0.36f);
 
         t.barrel = new GameObject("Barrel").transform;
         t.barrel.SetParent(t.mount, false);
-        t.tube = NewSprite("Tube", t.barrel, ProcSprites.Pixel, new Color(0.82f, 0.85f, 0.9f), 8, 1f);
-        t.tube.transform.localScale = new Vector3(0.26f, 0.075f, 1f);
+        t.tube = NewSprite("Beam", t.barrel, ProcSprites.Glow, new Color(turretColor.r, turretColor.g, turretColor.b, 0.8f), 8, 1f);
+        t.tube.transform.localScale = new Vector3(0.36f, 0.1f, 1f);
         t.muzzle = NewSprite("Muzzle", t.barrel, ProcSprites.Glow, Color.clear, 9, 0.4f);
         t.muzzle.transform.localPosition = new Vector3(0.3f, 0f, 0f);
         t.hub = NewSprite("Hub", t.mount, ProcSprites.Ball, turretColor, 9, 0.13f);
@@ -1299,7 +1468,8 @@ public class PendulumController : MonoBehaviour
             t.muzzle.color = new Color(turretColor.r, turretColor.g, turretColor.b, 0.9f * t.flash);
             t.muzzle.transform.localScale = Vector3.one * (0.25f + 0.3f * t.flash);
             t.hub.color = Color.Lerp(turretColor, Color.white, t.flash * 0.6f);
-            t.glow.color = new Color(turretColor.r, turretColor.g, turretColor.b, 0.15f + 0.3f * t.flash);
+            t.glow.color = new Color(turretColor.r, turretColor.g, turretColor.b, 0.2f + 0.1f * Mathf.Sin(Time.time * 4f + i) + 0.3f * t.flash);
+            t.symbol.transform.localRotation = Quaternion.Euler(0f, 0f, Time.time * 40f);
         }
     }
 

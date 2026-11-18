@@ -156,36 +156,37 @@ MonoBehaviour:
   baseSpeed: 5
   speedGrowthPerLevel: 0.1
   speedGainPerSecond: 0.01
-  shardSpeedMultiplier: 1.55
+  shardSpeedMultiplier: 1.8
   shardSize: 2.5
-  bruteSpeedMultiplier: 0.6
-  brokenSpeedMultiplier: 3
+  bruteSpeedMultiplier: 0.65
+  brokenSpeedMultiplier: 2.5
+  flashSpeedMultiplier: 8.9
   bruteChance: 0.25
-  maxBruteChance: 0.45
+  maxBruteChance: 0.4
   bruteChancePerLevel: 0.02
-  missileUnlockLevel: 6
+  missileUnlockLevel: 3
   missileChance: 0.05
-  maxMissileChance: 0.14
+  maxMissileChance: 0.1
   missileChancePerLevel: 0.01
   missileSpeedMultiplier: 1.55
   missileSpeedPerLevel: 0.03
   missileTurnRate: 60
   missileTurnRatePerLevel: 4
-  flashUnlockLevel: 8
+  flashUnlockLevel: 10
   flashChance: 0.05
-  maxFlashChance: 0.12
+  maxFlashChance: 0.1
   flashChancePerLevel: 0.01
-  brokenUnlockLevel: 7
+  brokenUnlockLevel: 8
   brokenChance: 0.05
-  maxBrokenChance: 0.16
+  maxBrokenChance: 0.1
   brokenChancePerLevel: 0.08
-  brokenPushInterval: 1
+  brokenPushInterval: 1.2
   brokenCoastDrag: 1
   brokenActiveTime: 8
   brokenActiveTimePerLevel: 0.5
-  brokenPushFalloff: 0.85
+  brokenPushFalloff: 0.9
   brokenPushFalloffPerLevel: 0.015
-  bundleUnlockLevel: 4
+  bundleUnlockLevel: 6
   bundleChance: 0.15
   bundleChancePerLevel: 0.03
   bundleStartSize: 2
@@ -303,11 +304,11 @@ MonoBehaviour:
   maxRepelUpgrades: 5
   maxBoosterUpgrades: 5
   rareUnlockLevel: 3
-  rareChance: 0.02
+  rareChance: 0.05
   orbsPerRecycledCoin: 5
   orbsPerRecycledHeart: 3
   characterUnlockLevel: 5
-  characterChance: 0.04
+  characterChance: 0.05
   mysteryRevealTime: 2.4
   challengerCoins: 3
   sluggishTighten: 0.7
@@ -319,6 +320,7 @@ MonoBehaviour:
   maxFireRateUpgrades: 5
   turretRangePerUpgrade: 1
   maxTurretRangeUpgrades: 5
+  musicVolume: 0.4
   cameraSize: 7
   cameraSmoothTime: 0.25
   cameraLookAhead: 0.35
@@ -524,6 +526,8 @@ MonoBehaviour:
   coreRadius: 0.26
   podColor: {r: 0.9, g: 0.82, b: 0.62, a: 1}
   thrusterColor: {r: 1, g: 0.55, b: 0.15, a: 1}
+  driveColor: {r: 0.6, g: 0.88, b: 1, a: 1}
+  meltdownTime: 1.2
   thrustAcceleration: 10
   pivotDrag: 1.1
   maxPivotSpeed: 6
@@ -567,6 +571,8 @@ MonoBehaviour:
   repelTurnPerLevel: 0.1
   repelCooldown: 0.5
   repelColor: {r: 0.75, g: 0.9, b: 1, a: 1}
+  asteroidRepelMass: 6
+  asteroidHitCooldown: 0.6
   boostDuration: 1.5
   boostDurationPerLevel: 0.35
   boostMultiplier: 1.6

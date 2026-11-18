@@ -40,6 +40,8 @@ public class EnemySpawner : MonoBehaviour
     [Tooltip("Broken Thruster: speed right after its first push (later pushes get weaker).")]
     [FormerlySerializedAs("brokenPushSpeedMultiplier")]
     public float brokenSpeedMultiplier = 2.8f;
+    [Tooltip("Lightning Flash: dash speed (x base speed). 8.9 = the old fixed 32 at level 1.")]
+    public float flashSpeedMultiplier = 8.9f;
 
     [Header("Types")]
     [Tooltip("Chance a single enemy is a Brute instead of a Shard.")]
@@ -349,6 +351,8 @@ public class EnemySpawner : MonoBehaviour
             mover.brokenPushFalloff = GrowFraction(brokenPushFalloff, brokenPushFalloffPerLevel, over);
             mover.brokenDriftSpeed = BaseSpeed * 0.5f;
         }
+        if (type == EnemyType.Flash)
+            mover.flashDashSpeed = BaseSpeed * flashSpeedMultiplier;
         if (type == EnemyType.Missile)
             mover.missileTurnRate = Grow(missileTurnRate, missileTurnRatePerLevel, Mathf.Max(0, level - missileUnlockLevel));
         enemies.Add(enemy);

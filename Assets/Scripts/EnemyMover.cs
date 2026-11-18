@@ -37,7 +37,7 @@ public class EnemyMover : MonoBehaviour
     // Flash tuning.
     public static float FlashAimTime = 1.0f;         // tracks the player
     public static float FlashLockTime = 0.4f;        // aim frozen, line flashes: dodge now!
-    public static float FlashDashSpeed = 32f;
+    [HideInInspector] public float flashDashSpeed = 32f;   // set by the spawner
 
     // Broken Thruster tuning (set by the spawner before the first Update).
     [HideInInspector] public float brokenPushInterval = 1.2f;   // seconds between pushes
@@ -78,6 +78,7 @@ public class EnemyMover : MonoBehaviour
     FlashPhase phase;
     float phaseTime;
     SpriteRenderer aimLine;
+    SpriteRenderer radical;
     Vector2 lastPos;
 
     // Broken Thruster state.
@@ -90,6 +91,7 @@ public class EnemyMover : MonoBehaviour
     {
         type = enemyType;
         color = enemyColor;
+        Codex.See(Codex.Enemy(type));
         moveDirection = dir.normalized;
         speed = spd;
         impactForce = impact;
@@ -102,22 +104,22 @@ public class EnemyMover : MonoBehaviour
                 bodyScale = 1.9f;
                 radius = 0.82f;
                 hp = 2;
-                bodySprite = ProcSprites.Brute;
+                bodySprite = ProcSprites.Alpha;   // alpha particle
                 spin = (Random.value < 0.5f ? -1f : 1f) * Random.Range(15f, 30f);
                 impactForce *= 2f;
                 break;
             case EnemyType.Missile:
-                bodyScale = 0.7f;
+                bodyScale = 0.5f;
                 radius = 0.16f;
                 hp = 1;
-                bodySprite = ProcSprites.Missile;
+                bodySprite = ProcSprites.Positron;
                 locked = true;
                 break;
             case EnemyType.Flash:
-                bodyScale = 0.6f;
+                bodyScale = 0.85f;
                 radius = 0.17f;
                 hp = 1;
-                bodySprite = ProcSprites.Dart;
+                bodySprite = ProcSprites.Gamma;   // gamma ray
                 phase = FlashPhase.Aim;
                 speed = 0f;
                 break;
@@ -125,7 +127,7 @@ public class EnemyMover : MonoBehaviour
                 bodyScale = 0.8f;
                 radius = 0.28f;
                 hp = 2;
-                bodySprite = ProcSprites.BrokenThruster;
+                bodySprite = ProcSprites.Isotope;   // unstable isotope
                 pushTimer = 0.15f;   // first push right after it appears
                 break;
             default:
@@ -142,6 +144,8 @@ public class EnemyMover : MonoBehaviour
         coreBase = type == EnemyType.Brute ? bodyScale * 0.3f : bodyScale * 0.2f;
         core = Child("Core", ProcSprites.Ball, Color.Lerp(color, Color.white, 0.6f), 21, coreBase);
 
+        if (type == EnemyType.Shard)   // free radical: its one unpaired electron whirls around it
+            radical = Child("Unpaired", ProcSprites.Ball, Color.Lerp(color, Color.white, 0.7f), 22, bodyScale * 0.32f);
         if (type == EnemyType.Missile)
         {
             lockLight = Child("LockLight", ProcSprites.Ball, Color.clear, 22, 0.12f);
@@ -173,7 +177,8 @@ public class EnemyMover : MonoBehaviour
     {
         if (type == EnemyType.Brute) return;
         float ang = Mathf.Atan2(moveDirection.y, moveDirection.x) * Mathf.Rad2Deg;
-        body.localRotation = Quaternion.Euler(0f, 0f, ang);
+        // The positron's "+" stays upright.
+        body.localRotation = type == EnemyType.Missile ? Quaternion.identity : Quaternion.Euler(0f, 0f, ang);
         if (lockLight != null) lockLight.transform.localPosition = (Vector3)(moveDirection * bodyScale * 0.32f);
     }
 
@@ -219,10 +224,16 @@ public class EnemyMover : MonoBehaviour
         if (spin != 0f) body.Rotate(0f, 0f, spin * dt);
         float pulseRate = type == EnemyType.Brute ? 5f : 20f;
         core.transform.localScale = Vector3.one * coreBase * (1f + 0.2f * Mathf.Sin(age * pulseRate));
+        if (radical != null)
+        {
+            float ra = age * 14f;
+            radical.transform.localPosition = new Vector3(Mathf.Cos(ra), Mathf.Sin(ra), 0f) * bodyScale * 0.7f;
+        }
 
         damageFlash = Mathf.MoveTowards(damageFlash, 0f, dt * 4f);
         Color bc = Color.Lerp(color, Color.white, damageFlash);
         if ((type == EnemyType.Brute || type == EnemyType.Broken) && hp == 1) bc *= 0.75f;   // cracked / weakened
+        if (type == EnemyType.Broken && gaveUp) bc = Color.Lerp(bc, new Color(0.5f, 0.5f, 0.55f), 0.6f);   // decayed: stable, inert
         bc.a = 1f;
         bodySR.color = bc;
 
@@ -259,6 +270,11 @@ public class EnemyMover : MonoBehaviour
         // Ball contact: both take a hit.
         if (hitCooldown <= 0f && pc.TryAbsorbHit(p, radius, color))
         {
+            if (type == EnemyType.Missile)   // positron + electron: annihilation flash
+            {
+                ParticleBursts.Burst(p, Color.white, 22, 8f, 0.25f, 0.35f);
+                Sfx.Play("zap", 0.35f);
+            }
             hp--;
             if (hp <= 0)
             {
@@ -508,7 +524,7 @@ public class EnemyMover : MonoBehaviour
                 {
                     phase = FlashPhase.Dash;
                     phaseTime = 0f;
-                    speed = FlashDashSpeed;
+                    speed = flashDashSpeed;
                     aimLine.color = Color.clear;
                     Sfx.Play("zap");
                     if (GameManager.Instance != null) GameManager.Instance.AddShake(0.25f);
@@ -546,12 +562,12 @@ public class EnemyMover : MonoBehaviour
 
     /// <summary>
     /// Where a target moving at constant velocity will be when the strike reaches it, if the
-    /// aim were locked right now (lock delay first, then a dash at FlashDashSpeed).
+    /// aim were locked right now (lock delay first, then a dash at flashDashSpeed).
     /// </summary>
-    static Vector2 PredictIntercept(Vector2 from, Vector2 targetPos, Vector2 targetVel)
+    Vector2 PredictIntercept(Vector2 from, Vector2 targetPos, Vector2 targetVel)
     {
         float t0 = FlashLockTime;
-        float s = FlashDashSpeed;
+        float s = Mathf.Max(0.1f, flashDashSpeed);
         Vector2 d = targetPos + targetVel * t0 - from;      // target relative to us when the dash starts
         // Solve |d + v*tau| = s*tau for the smallest positive tau.
         float a = Vector2.Dot(targetVel, targetVel) - s * s;
