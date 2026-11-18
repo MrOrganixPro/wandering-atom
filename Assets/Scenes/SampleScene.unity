@@ -151,58 +151,53 @@ MonoBehaviour:
   firstSpawnDelay: 1.5
   startInterval: 1.8
   intervalMultiplierPerLevel: 0.92
-  minInterval: 0.3
   intervalDropPerSecond: 0.003
+  growthSoftness: 10
   baseSpeed: 5
   speedGrowthPerLevel: 0.1
   speedGainPerSecond: 0.01
-  maxBaseSpeed: 25
   shardSpeedMultiplier: 1.55
   shardSize: 2.5
   bruteSpeedMultiplier: 0.6
+  brokenSpeedMultiplier: 3
   bruteChance: 0.25
-  bruteChancePerLevel: 0.02
   maxBruteChance: 0.45
+  bruteChancePerLevel: 0.02
   missileUnlockLevel: 6
   missileChance: 0.05
+  maxMissileChance: 0.14
   missileChancePerLevel: 0.01
-  maxMissileChance: 0.1
   missileSpeedMultiplier: 1.55
   missileSpeedPerLevel: 0.03
-  maxMissileSpeedMultiplier: 2
   missileTurnRate: 60
   missileTurnRatePerLevel: 4
-  maxMissileTurnRate: 120
   flashUnlockLevel: 8
   flashChance: 0.05
+  maxFlashChance: 0.12
   flashChancePerLevel: 0.01
-  maxFlashChance: 0.1
   brokenUnlockLevel: 7
-  brokenChance: 0.04
+  brokenChance: 0.05
+  maxBrokenChance: 0.16
   brokenChancePerLevel: 0.08
-  maxBrokenChance: 0.08
-  brokenPushInterval: 2
-  brokenPushSpeedMultiplier: 2.8
-  brokenCoastDrag: 2.2
-  brokenMaxTurnPerPush: 75
-  brokenGiveUpDistance: 6
+  brokenPushInterval: 1
+  brokenCoastDrag: 1
+  brokenActiveTime: 8
+  brokenActiveTimePerLevel: 0.5
+  brokenPushFalloff: 0.85
+  brokenPushFalloffPerLevel: 0.015
   bundleUnlockLevel: 4
   bundleChance: 0.15
   bundleChancePerLevel: 0.03
-  maxBundleChance: 0.4
   bundleStartSize: 2
   levelsPerExtraBundleEnemy: 2
-  maxBundleSize: 15
   bundleSpacing: 0.5
   bundleExtraWarning: 0.4
   bundleSpeedMultiplier: 1.15
   doubleUnlockLevel: 10
   doubleChance: 0.15
   doubleChancePerLevel: 0.04
-  maxDoubleChance: 0.55
   startWarningTime: 1.1
   warningDropPerLevel: 0.05
-  minWarningTime: 0.6
   laneSpread: 0.9
   aimedChance: 0.35
   leadFactor: 0.6
@@ -280,8 +275,10 @@ MonoBehaviour:
   wellUnlockLevel: 4
   wellInterval: {x: 22, y: 35}
   wellCoreRadius: 1
-  wellPullRadius: 10
-  wellPullStrength: 10
+  wellPullRadius: 15
+  wellPullStrength: 25
+  wellPullPerLevel: 0.6
+  wellCorePullMultiplier: 2
   wellSpeed: {x: 0.3, y: 0.6}
   maxWells: 1
   coinsPerLevel: 2
@@ -295,7 +292,7 @@ MonoBehaviour:
   upgradeChoices: 3
   speedPerUpgrade: 0.2
   thrustPerUpgrade: 0.2
-  torquePerUpgrade: 6
+  torquePerUpgrade: 4
   turnAuthorityPerTorque: 0.15
   maxBallArmorUpgrades: 2
   levelsPerBallArmor: 4
@@ -306,9 +303,11 @@ MonoBehaviour:
   maxRepelUpgrades: 5
   maxBoosterUpgrades: 5
   rareUnlockLevel: 3
-  rareChance: 0.05
+  rareChance: 0.02
+  orbsPerRecycledCoin: 5
+  orbsPerRecycledHeart: 3
   characterUnlockLevel: 5
-  characterChance: 0.05
+  characterChance: 0.04
   mysteryRevealTime: 2.4
   challengerCoins: 3
   sluggishTighten: 0.7
