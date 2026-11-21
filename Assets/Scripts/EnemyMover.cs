@@ -7,7 +7,15 @@ using UnityEngine;
 /// Missile: homes in on the thruster for as long as it lives, but turns slower than the player
 ///          can, so it can be outmaneuvered (a Repel blast breaks its lock briefly). Beeps while locked.
 /// Flash:   appears on the screen edge, aims at the thruster, locks its aim, then strikes in a
-///          straight line at lightning speed. It stops at the far edge and strikes again, until killed.
+///          straight line at lightning speed, piercing through up to 3 things (electrons or the
+///          core), knocking electrons out of the atom. One strike, then it is gone.
+///          Gamma Rain rays aim at a fixed spot near the atom instead of tracking it.
+///
+/// Electrons: an enemy that takes an electron's last hit snatches it. A free radical bonds with
+/// it and the pair veers off and sinks away; an alpha particle carries it and keeps coming (with
+/// two it is a stable helium atom and leaves); a positron forms positronium with it, the two
+/// spiral together and annihilate in a flash. Gamma rays and an isotope's first hit just knock
+/// the electron loose.
 /// Broken Thruster: 2 hit points. No steady engine: every few seconds it sputters out one
 ///          push toward the thruster (it can only turn so far per push), then coasts and slows
 ///          down. Each push is weaker than the last, and after a while the engine dies and it drifts off.
@@ -38,6 +46,10 @@ public class EnemyMover : MonoBehaviour
     public static float FlashAimTime = 1.0f;         // tracks the player
     public static float FlashLockTime = 0.4f;        // aim frozen, line flashes: dodge now!
     [HideInInspector] public float flashDashSpeed = 32f;   // set by the spawner
+    [HideInInspector] public int flashHits = 3;            // things (electrons / the core) it can hit before it is spent
+    [HideInInspector] public bool rainStrike;              // Gamma Rain: one strike at rainTarget, then gone
+    [HideInInspector] public Vector2 rainTarget;
+    [HideInInspector] public float flashAimTime = -1f;     // < 0: FlashAimTime
 
     // Broken Thruster tuning (set by the spawner before the first Update).
     [HideInInspector] public float brokenPushInterval = 1.2f;   // seconds between pushes
@@ -59,7 +71,8 @@ public class EnemyMover : MonoBehaviour
     const float KnockDrag = 2.5f;
     bool dead;                           // killed this frame (Destroy is deferred)
 
-    public bool IsDead => dead;
+    /// <summary>Dead, or bonded and leaving (harmless, not a target any more).</summary>
+    public bool IsDead => dead || bond != BondState.None;
     public Vector2 Position => transform.position;
     /// <summary>Current velocity, including any Repel knock-back.</summary>
     public Vector2 Velocity => moveDirection * speed + knock;
@@ -79,6 +92,25 @@ public class EnemyMover : MonoBehaviour
     float phaseTime;
     SpriteRenderer aimLine;
     SpriteRenderer radical;
+    readonly List<object> pierced = new List<object>();   // electrons this strike already went through
+
+    // Bonds: electrons this enemy snatched from the atom.
+    class Captured
+    {
+        public Transform t;
+        public SpriteRenderer body, glow;
+        public Vector2 from;
+        public float age, phase;
+    }
+    readonly List<Captured> captured = new List<Captured>();
+    enum BondState { None, Leaving, Positronium }
+    BondState bond;
+    float bondTime, bondRadius, bondAngle;
+    Vector2 bondMid, bondDrift;
+    SpriteRenderer[] fadeRenderers;
+    float[] fadeAlphas;
+    const float LeaveTime = 1.8f, PositroniumTime = 0.6f;
+    bool coreStruck;                                       // ... and whether it went through the core
     Vector2 lastPos;
 
     // Broken Thruster state.
@@ -186,6 +218,11 @@ public class EnemyMover : MonoBehaviour
     {
         if (dead) return;
         float dt = Time.deltaTime;
+        if (bond != BondState.None)
+        {
+            UpdateBond(dt);
+            return;
+        }
         age += dt;
         hitCooldown -= dt;
         var pc = pendulumController;
@@ -196,6 +233,7 @@ public class EnemyMover : MonoBehaviour
             case EnemyType.Flash: UpdateFlash(dt, pc); break;
             case EnemyType.Broken: UpdateBroken(dt, pc); break;
         }
+        if (dead) return;   // a Gamma Rain ray that finished its strike
 
         // Gravity wells bend the flight path (speed stays the same).
         if (speed > 0f)
@@ -221,6 +259,7 @@ public class EnemyMover : MonoBehaviour
             if (CheckCollisions(pc)) return;
         }
 
+        UpdateCaptured(dt);
         if (spin != 0f) body.Rotate(0f, 0f, spin * dt);
         float pulseRate = type == EnemyType.Brute ? 5f : 20f;
         core.transform.localScale = Vector3.one * coreBase * (1f + 0.2f * Mathf.Sin(age * pulseRate));
@@ -266,16 +305,38 @@ public class EnemyMover : MonoBehaviour
         }
 
         if (pc == null || !pc.IsAlive) return false;
+        if (type == EnemyType.Flash) return CheckPierce(pc, p);
 
-        // Ball contact: both take a hit.
-        if (hitCooldown <= 0f && pc.TryAbsorbHit(p, radius, color))
+        // Electron contact: both take a hit; an electron out of hits is snatched (see the class notes).
+        Vector2 takenPos = p;
+        Color takenColor = Pickup.OrbColor;
+        var hit = hitCooldown <= 0f ? pc.HitElectron(p, radius, out takenPos, out takenColor)
+                                    : PendulumController.ElectronHit.None;
+        if (hit != PendulumController.ElectronHit.None)
         {
-            if (type == EnemyType.Missile)   // positron + electron: annihilation flash
+            if (type == EnemyType.Missile)
             {
-                ParticleBursts.Burst(p, Color.white, 22, 8f, 0.25f, 0.35f);
+                if (hit == PendulumController.ElectronHit.Taken)
+                {
+                    BeginPositronium(takenPos, takenColor);
+                    return true;
+                }
+                ParticleBursts.Burst(p, Color.white, 22, 8f, 0.25f, 0.35f);   // armored electron: just the flash
                 Sfx.Play("zap", 0.35f);
             }
             hp--;
+            if (hit == PendulumController.ElectronHit.Taken)
+            {
+                if (type == EnemyType.Broken && hp > 0)   // the isotope's decay shakes it loose
+                    LooseElectron.Spawn(takenPos, (takenPos - p).normalized * 3f + moveDirection * 2f, takenColor, ElectronSize);
+                else
+                    Capture(takenPos, takenColor);
+            }
+            if (captured.Count > 0 && (hp <= 0 || (type == EnemyType.Brute && captured.Count >= 2)))
+            {
+                BeginLeaving();   // bonded (an alpha with two electrons is helium): off it goes
+                return true;
+            }
             if (hp <= 0)
             {
                 ParticleBursts.Burst(p, color, type == EnemyType.Brute ? 40 : 10, type == EnemyType.Brute ? 7f : 5f, 0.3f, 0.6f);
@@ -302,6 +363,182 @@ public class EnemyMover : MonoBehaviour
             }
         }
         return false;
+    }
+
+    /// <summary>
+    /// Gamma ray: goes straight through what it hits, spending one of its hits on each electron
+    /// (each only once per strike) and on the core; gone once they are used up.
+    /// </summary>
+    bool CheckPierce(PendulumController pc, Vector2 p)
+    {
+        bool spent = false;
+        var hit = pc.HitElectron(p, radius, out Vector2 takenPos, out Color takenColor, pierced);
+        if (hit != PendulumController.ElectronHit.None)
+        {
+            ParticleBursts.Burst(p, Color.white, 12, 6f, 0.2f, 0.3f);
+            if (hit == PendulumController.ElectronHit.Taken)   // ionized: knocked out along the ray
+            {
+                Vector2 side = new Vector2(-moveDirection.y, moveDirection.x) * Random.Range(-2.5f, 2.5f);
+                LooseElectron.Spawn(takenPos, moveDirection * 8f + side, takenColor, ElectronSize);
+            }
+            spent = --flashHits <= 0;
+        }
+        if (!spent && !coreStruck && pc.CanBeHit)
+        {
+            float hitDist = radius + pc.CoreRadius;
+            if ((pc.PivotPosition - p).sqrMagnitude < hitDist * hitDist)
+            {
+                coreStruck = true;
+                pc.TakeHit(moveDirection * impactForce, color);
+                ParticleBursts.Burst(p, color, 14, 5f, 0.25f, 0.5f);
+                spent = --flashHits <= 0;
+            }
+        }
+        if (!spent) return false;
+        ParticleBursts.Burst(p, color, 16, 6f, 0.3f, 0.5f);
+        dead = true;
+        Destroy(gameObject);
+        return true;
+    }
+
+    // ------------------------------------------------------------------ bonds
+
+    float ElectronSize => pendulumController != null ? pendulumController.ElectronSize : 0.32f;
+    float CaptureOrbit => type == EnemyType.Brute ? 1.05f : Mathf.Max(radius * 1.9f, 0.34f);
+
+    /// <summary>A snatched electron: snaps from where it was onto an orbit around this enemy.</summary>
+    void Capture(Vector2 from, Color c)
+    {
+        var root = new GameObject("SnatchedElectron").transform;
+        root.SetParent(transform, false);
+        root.position = from;
+        float size = ElectronSize;
+        var cap = new Captured
+        {
+            t = root, from = from, phase = captured.Count * Mathf.PI,
+            glow = Child("Glow", ProcSprites.Glow, new Color(c.r, c.g, c.b, 0.5f), 21, size * 2.8f),
+            body = Child("Body", ProcSprites.Electron, c, 23, size),
+        };
+        cap.glow.transform.SetParent(root, false);
+        cap.body.transform.SetParent(root, false);
+        cap.glow.transform.localPosition = cap.body.transform.localPosition = Vector3.zero;
+        captured.Add(cap);
+        ParticleBursts.Burst(from, Color.Lerp(c, Color.white, 0.5f), 10, 3f, 0.2f, 0.35f);
+    }
+
+    void UpdateCaptured(float dt)
+    {
+        Vector2 pos = transform.position;
+        float orbit = CaptureOrbit * transform.localScale.x;
+        foreach (var c in captured)
+        {
+            c.age += dt;
+            float k = Mathf.Clamp01(c.age / 0.22f);
+            k = 1f - (1f - k) * (1f - k);
+            float a = age * 7f + c.phase;
+            Vector2 slot = pos + new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * orbit;
+            c.t.position = Vector2.Lerp(c.from, slot, k);
+        }
+    }
+
+    /// <summary>Stops being an enemy: no more hits, not targeted, drawn behind everything.</summary>
+    void BecomeHarmless(BondState state)
+    {
+        bond = state;
+        bondTime = 0f;
+        All.Remove(this);
+        if (aimLine != null) aimLine.color = Color.clear;
+        fadeRenderers = GetComponentsInChildren<SpriteRenderer>();
+        fadeAlphas = new float[fadeRenderers.Length];
+        for (int i = 0; i < fadeRenderers.Length; i++)
+        {
+            fadeAlphas[i] = fadeRenderers[i].color.a;
+            fadeRenderers[i].sortingOrder -= 85;   // sink behind the atom and the other enemies
+        }
+    }
+
+    /// <summary>The bonded pair veers away from the atom, slowing, shrinking and fading.</summary>
+    void BeginLeaving()
+    {
+        BecomeHarmless(BondState.Leaving);
+        speed = Mathf.Max(speed, 1.5f);
+        Sfx.Play("lock", 0.6f);
+    }
+
+    /// <summary>Positron + electron: they circle each other ever tighter, then annihilate.</summary>
+    void BeginPositronium(Vector2 electronPos, Color electronColor)
+    {
+        Capture(electronPos, electronColor);
+        BecomeHarmless(BondState.Positronium);
+        Vector2 pos = transform.position;
+        bondMid = (pos + electronPos) * 0.5f;
+        Vector2 d = pos - bondMid;
+        bondRadius = Mathf.Max(0.18f, d.magnitude);
+        bondAngle = Mathf.Atan2(d.y, d.x);
+        bondDrift = moveDirection * speed * 0.25f;
+        Sfx.Play("charge", 0.4f);
+    }
+
+    void UpdateBond(float dt)
+    {
+        bondTime += dt;
+        if (bond == BondState.Positronium)
+        {
+            float k = Mathf.Clamp01(bondTime / PositroniumTime);
+            bondMid += bondDrift * dt;
+            bondDrift *= Mathf.Exp(-3f * dt);
+            float r = bondRadius * Mathf.Pow(1f - k, 1.3f);
+            bondAngle += Mathf.Lerp(8f, 45f, k * k) * dt;
+            Vector2 dir = new Vector2(Mathf.Cos(bondAngle), Mathf.Sin(bondAngle));
+            transform.position = bondMid + dir * r;
+            if (captured.Count > 0) captured[0].t.position = bondMid - dir * r;
+            if (glow != null) glow.transform.localScale = Vector3.one * bodyScale * 2.3f * (1f + 0.6f * k);
+            if (k < 1f) return;
+
+            // Annihilation: a flash, and two gamma photons flying apart in opposite directions.
+            Vector2 a = Random.insideUnitCircle.normalized;
+            ParticleBursts.Burst(bondMid, Color.white, 28, 9f, 0.3f, 0.4f);
+            for (int i = 0; i < 3; i++)
+            {
+                Color photon = new Color(1f, 0.95f, 0.3f);
+                ParticleBursts.Emit(bondMid, a * (16f - i * 3f), photon, 0.24f - i * 0.05f, 0.5f, 0.6f);
+                ParticleBursts.Emit(bondMid, -a * (16f - i * 3f), photon, 0.24f - i * 0.05f, 0.5f, 0.6f);
+            }
+            Sfx.Play("zap", 0.6f);
+            if (GameManager.Instance != null) GameManager.Instance.AddShake(0.12f);
+            dead = true;
+            Destroy(gameObject);
+            return;
+        }
+
+        // Leaving: curve away from the atom, slow down, shrink and fade into the background.
+        float t = Mathf.Clamp01(bondTime / LeaveTime);
+        var pc = pendulumController;
+        Vector2 p = transform.position;
+        if (pc != null)
+        {
+            Vector2 away = p - pc.PivotPosition;
+            if (away.sqrMagnitude > 1e-4f)
+                moveDirection = Vector2.Lerp(moveDirection, away.normalized, 1f - Mathf.Exp(-2.5f * dt)).normalized;
+        }
+        speed = Mathf.Max(0.6f, speed * Mathf.Exp(-1.3f * dt));
+        transform.position = p + moveDirection * speed * dt;
+        transform.localScale = Vector3.one * (1f - 0.55f * t);
+        age += dt;
+        UpdateCaptured(dt);
+        if (body != null) body.Rotate(0f, 0f, 90f * dt);
+        for (int i = 0; i < fadeRenderers.Length; i++)
+        {
+            if (fadeRenderers[i] == null) continue;
+            Color c = fadeRenderers[i].color;
+            c.a = fadeAlphas[i] * (1f - t);
+            fadeRenderers[i].color = c;
+        }
+        if (t >= 1f)
+        {
+            dead = true;
+            Destroy(gameObject);
+        }
     }
 
     /// <summary>
@@ -335,6 +572,7 @@ public class EnemyMover : MonoBehaviour
     /// </summary>
     public void Repel(Vector2 from, float radius, float force, float turn)
     {
+        if (bond != BondState.None) return;
         Vector2 d = (Vector2)transform.position - from;
         float dist = d.magnitude;
         if (dist > radius) return;
@@ -505,7 +743,13 @@ public class EnemyMover : MonoBehaviour
         switch (phase)
         {
             case FlashPhase.Aim:
-                if (pc != null && pc.IsAlive)
+                if (rainStrike)
+                {
+                    Vector2 toTarget = rainTarget - pos;
+                    if (toTarget.sqrMagnitude > 0.01f) moveDirection = toTarget.normalized;
+                    FaceDirection();
+                }
+                else if (pc != null && pc.IsAlive)
                 {
                     // Aim where the thruster WILL be if it keeps its current velocity: it keeps
                     // moving during the lock delay, then the strike has to catch it.
@@ -514,7 +758,7 @@ public class EnemyMover : MonoBehaviour
                     FaceDirection();
                 }
                 SetAimLine(pos, lineLen, 0.03f, 0.15f + 0.15f * Mathf.Repeat(age * 12f, 1f));
-                if (phaseTime >= FlashAimTime) { phase = FlashPhase.Lock; phaseTime = 0f; }
+                if (phaseTime >= (flashAimTime >= 0f ? flashAimTime : FlashAimTime)) { phase = FlashPhase.Lock; phaseTime = 0f; }
                 break;
 
             case FlashPhase.Lock:
@@ -525,6 +769,8 @@ public class EnemyMover : MonoBehaviour
                     phase = FlashPhase.Dash;
                     phaseTime = 0f;
                     speed = flashDashSpeed;
+                    pierced.Clear();
+                    coreStruck = false;
                     aimLine.color = Color.clear;
                     Sfx.Play("zap");
                     if (GameManager.Instance != null) GameManager.Instance.AddShake(0.25f);
@@ -544,17 +790,12 @@ public class EnemyMover : MonoBehaviour
                 Vector2 half = GameManager.HalfExtents - new Vector2(0.8f, 0.8f);
                 Vector2 rel = pos - vc;
                 bool outside = Mathf.Abs(rel.x) > half.x || Mathf.Abs(rel.y) > half.y;
-                if (outside && Vector2.Dot(rel, moveDirection) > 0f && pc != null && pc.IsAlive)
+                if (outside && Vector2.Dot(rel, moveDirection) > 0f)
                 {
-                    transform.position = new Vector3(
-                        vc.x + Mathf.Clamp(rel.x, -half.x, half.x),
-                        vc.y + Mathf.Clamp(rel.y, -half.y, half.y),
-                        transform.position.z);
-                    speed = 0f;
-                    phase = FlashPhase.Aim;
-                    phaseTime = 0f;
-                    Sfx.Play("charge");
-                    ParticleBursts.Burst(transform.position, color, 16, 4f, 0.25f, 0.5f);
+                    dead = true;   // one strike, then it is gone
+                    ParticleBursts.Burst(pos, color, 10, 3f, 0.2f, 0.4f);
+                    Destroy(gameObject);
+                    return;
                 }
                 break;
         }

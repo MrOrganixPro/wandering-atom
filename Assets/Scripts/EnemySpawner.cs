@@ -42,6 +42,8 @@ public class EnemySpawner : MonoBehaviour
     public float brokenSpeedMultiplier = 2.8f;
     [Tooltip("Lightning Flash: dash speed (x base speed). 8.9 = the old fixed 32 at level 1.")]
     public float flashSpeedMultiplier = 8.9f;
+    [Tooltip("Gamma ray: how many things (electrons or the core) it can hit before it is spent. 3 = it pierces two, the third stops it.")]
+    public int gammaHits = 3;
 
     [Header("Types")]
     [Tooltip("Chance a single enemy is a Brute instead of a Shard.")]
@@ -101,6 +103,35 @@ public class EnemySpawner : MonoBehaviour
     [Range(0f, 1f)] public float doubleChance = 0.15f;
     public float doubleChancePerLevel = 0.04f;
 
+    [Header("Attraction (a bigger atom pulls in more particles)")]
+    [Tooltip("Electrons the atom can hold before it starts attracting extra enemies.")]
+    public int attractionFreeElectrons = 4;
+    [Tooltip("Waves come this much more often per electron above the free amount (0.03: 20 extra electrons = 1.6x as often).")]
+    public float attractionRatePerElectron = 0.03f;
+    [Tooltip("Chance an enemy flies straight at the core, added per extra electron.")]
+    public float attractionAimPerElectron = 0.012f;
+    [Range(0f, 1f)] public float attractionMaxAimedChance = 0.75f;
+    [Tooltip("Chance a wave is a bundle, added per extra electron (once bundles are unlocked).")]
+    public float attractionBundlePerElectron = 0.008f;
+
+    [Header("Event: Gamma Rain")]
+    public int gammaRainUnlockLevel = 6;
+    [Tooltip("Chance a level has a Gamma Rain (on the unlock level; grows per level).")]
+    [Range(0f, 1f)] public float gammaRainChance = 0.3f;
+    public float gammaRainChancePerLevel = 0.04f;
+    [Tooltip("Seconds into the level it starts (random in this range).")]
+    public Vector2 gammaRainStart = new Vector2(8f, 20f);
+    [Tooltip("Seconds the warning is on screen before the first ray. Normal waves pause meanwhile.")]
+    public float gammaRainWarning = 2.5f;
+    public int gammaRainRays = 6;
+    public float gammaRainRaysPerLevel = 0.5f;
+    [Tooltip("Seconds over which the rays appear.")]
+    public float gammaRainDuration = 3.5f;
+    [Tooltip("Rays aim this close to the core (fraction of the reach of the electrons).")]
+    public float gammaRainSpread = 0.8f;
+    [Tooltip("Seconds a rain ray aims before it locks (normal gamma rays: 1).")]
+    public float gammaRainAimTime = 0.7f;
+
     [Header("Warnings")]
     public float startWarningTime = 1.1f;
     [Tooltip("Shrinks by about this much per level at first (approaches 0, never reaches it).")]
@@ -130,6 +161,12 @@ public class EnemySpawner : MonoBehaviour
     bool running;
     int level = 1;
     float elapsed, timer;
+
+    enum Rain { None, Waiting, Warning, Raining }
+    Rain rain;
+    float rainClock, rainAt, rainSide;
+    int rainSpawned, rainTotal;
+    public bool GammaRainActive => rain == Rain.Warning || rain == Rain.Raining;
     readonly List<GameObject> enemies = new List<GameObject>();
     readonly List<GameObject> warnings = new List<GameObject>();
 
@@ -148,11 +185,21 @@ public class EnemySpawner : MonoBehaviour
         running = true;
         elapsed = 0f;
         timer = firstSpawnDelay;
+
+        rain = Rain.None;
+        if (level >= gammaRainUnlockLevel
+            && Random.value < GrowFraction(gammaRainChance, gammaRainChancePerLevel, level - gammaRainUnlockLevel))
+        {
+            rain = Rain.Waiting;
+            rainClock = 0f;
+            rainAt = Random.Range(gammaRainStart.x, gammaRainStart.y);
+        }
     }
 
     public void StopSpawning()
     {
         running = false;
+        rain = Rain.None;
         foreach (var w in warnings) if (w != null) Destroy(w);
         warnings.Clear();
     }
@@ -181,17 +228,81 @@ public class EnemySpawner : MonoBehaviour
         if (running)
         {
             elapsed += Time.deltaTime;
-            timer -= Time.deltaTime;
+            UpdateRain(Time.deltaTime);
+            if (!GammaRainActive) timer -= Time.deltaTime;   // normal waves hold off during the rain
             if (timer <= 0f)
             {
                 SpawnWave();
                 float interval = startInterval * Mathf.Pow(intervalMultiplierPerLevel, Soft(level - 1));
                 interval *= Mathf.Exp(-elapsed * intervalDropPerSecond / Mathf.Max(0.01f, interval));
+                interval /= 1f + attractionRatePerElectron * ExtraElectrons;   // a bigger atom pulls harder
                 timer = interval;
             }
         }
         enemies.RemoveAll(e => e == null);
         warnings.RemoveAll(w => w == null);
+    }
+
+    // ------------------------------------------------------------ attraction
+
+    /// <summary>Electrons held above the free amount: each one draws in more (and better aimed) enemies.</summary>
+    int ExtraElectrons => pendulumController == null ? 0
+        : Mathf.Max(0, pendulumController.BallCount + pendulumController.TurretCount - attractionFreeElectrons);
+
+    float AimedChance => Mathf.Min(Mathf.Max(aimedChance, attractionMaxAimedChance),
+                                   aimedChance + attractionAimPerElectron * ExtraElectrons);
+
+    // ------------------------------------------------------------ gamma rain
+
+    void UpdateRain(float dt)
+    {
+        if (rain == Rain.None) return;
+        rainClock += dt;
+        switch (rain)
+        {
+            case Rain.Waiting:
+                if (rainClock < rainAt) return;
+                rain = Rain.Warning;
+                rainClock = 0f;
+                rainSide = Random.Range(0f, 360f);
+                GameUI.Announce(Loc.T("GAMMA RAIN", "GAMA YAĞMURU"), Loc.T("Incoming radiation!", "Radyasyon geliyor!"),
+                                flashColor, gammaRainWarning);
+                Sfx.Play("charge", 0.8f);
+                break;
+            case Rain.Warning:
+                if (rainClock < gammaRainWarning) return;
+                rain = Rain.Raining;
+                rainClock = 0f;
+                rainSpawned = 0;
+                rainTotal = Mathf.Max(1, Mathf.RoundToInt(Grow(gammaRainRays, gammaRainRaysPerLevel, level - gammaRainUnlockLevel)));
+                break;
+            case Rain.Raining:
+                float every = gammaRainDuration / rainTotal;
+                while (rainSpawned < rainTotal && rainClock >= rainSpawned * every)
+                {
+                    SpawnRainRay();
+                    rainSpawned++;
+                }
+                if (rainSpawned >= rainTotal && rainClock >= gammaRainDuration + gammaRainAimTime + EnemyMover.FlashLockTime + 0.5f)
+                {
+                    rain = Rain.None;
+                    timer = Mathf.Min(timer, 0.8f);   // the waves resume shortly after
+                }
+                break;
+        }
+    }
+
+    /// <summary>One ray of the rain: from the rain's side of the screen, aimed at a spot near the atom.</summary>
+    void SpawnRainRay()
+    {
+        float angle = rainSide + Random.Range(-40f, 40f);
+        var mover = SpawnFlash(angle);
+        if (mover == null) return;
+        Vector2 pivot = pendulumController != null ? pendulumController.PivotPosition : GameManager.ViewCenter;
+        float R = pendulumController != null ? pendulumController.ReachRadius : 1.5f;
+        mover.rainStrike = true;
+        mover.rainTarget = pivot + Random.insideUnitCircle * R * gammaRainSpread;
+        mover.flashAimTime = gammaRainAimTime;
     }
 
     // -------------------------------------------------------------- spawning
@@ -223,7 +334,9 @@ public class EnemySpawner : MonoBehaviour
     void SpawnWave()
     {
         float angle = Random.Range(0f, 360f);
-        if (Random.value < LevelChance(bundleChance, bundleChancePerLevel, bundleUnlockLevel))
+        float bundle = LevelChance(bundleChance, bundleChancePerLevel, bundleUnlockLevel);
+        if (level >= bundleUnlockLevel) bundle = Mathf.Min(0.9f, bundle + attractionBundlePerElectron * ExtraElectrons);
+        if (Random.value < bundle)
             QueueBundle(angle);
         else
             QueueSingle(angle);
@@ -239,7 +352,7 @@ public class EnemySpawner : MonoBehaviour
         Vector2 pivot = pendulumController != null ? pendulumController.PivotPosition : Vector2.zero;
         Vector2 pivotVel = pendulumController != null ? pendulumController.PivotVelocity : Vector2.zero;
         float R = pendulumController != null ? pendulumController.ReachRadius : 1.5f;
-        Vector2 target = Random.value < aimedChance ? pivot : pivot + Random.insideUnitCircle * R * laneSpread;
+        Vector2 target = Random.value < AimedChance ? pivot : pivot + Random.insideUnitCircle * R * laneSpread;
         target += pivotVel * warnTime * leadFactor;
 
         float a = fromAngle * Mathf.Deg2Rad;
@@ -322,20 +435,20 @@ public class EnemySpawner : MonoBehaviour
     }
 
     /// <summary>The Flash is its own telegraph: it appears just inside the screen edge and aims.</summary>
-    void SpawnFlash(float fromAngle)
+    EnemyMover SpawnFlash(float fromAngle)
     {
-        if (!running) return;
+        if (!running) return null;
         Vector2 vc = GameManager.ViewCenter;
         Vector2 half = GameManager.HalfExtents - new Vector2(0.8f, 0.8f);
         float a = fromAngle * Mathf.Deg2Rad;
         Vector2 d = new Vector2(Mathf.Cos(a), Mathf.Sin(a));
         float k = Mathf.Min(half.x / Mathf.Max(Mathf.Abs(d.x), 1e-4f), half.y / Mathf.Max(Mathf.Abs(d.y), 1e-4f));
-        SpawnEnemy(EnemyType.Flash, flashColor, vc + d * k, -d, 0f);
+        return SpawnEnemy(EnemyType.Flash, flashColor, vc + d * k, -d, 0f);
     }
 
-    void SpawnEnemy(EnemyType type, Color color, Vector2 start, Vector2 dir, float speed)
+    EnemyMover SpawnEnemy(EnemyType type, Color color, Vector2 start, Vector2 dir, float speed)
     {
-        if (!running) return;
+        if (!running) return null;
         var enemy = new GameObject(type.ToString());
         enemy.transform.position = start;
         var mover = enemy.AddComponent<EnemyMover>();
@@ -352,9 +465,13 @@ public class EnemySpawner : MonoBehaviour
             mover.brokenDriftSpeed = BaseSpeed * 0.5f;
         }
         if (type == EnemyType.Flash)
+        {
             mover.flashDashSpeed = BaseSpeed * flashSpeedMultiplier;
+            mover.flashHits = Mathf.Max(1, gammaHits);
+        }
         if (type == EnemyType.Missile)
             mover.missileTurnRate = Grow(missileTurnRate, missileTurnRatePerLevel, Mathf.Max(0, level - missileUnlockLevel));
         enemies.Add(enemy);
+        return mover;
     }
 }

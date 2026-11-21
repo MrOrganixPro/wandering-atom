@@ -277,7 +277,7 @@ MonoBehaviour:
   wellInterval: {x: 22, y: 35}
   wellCoreRadius: 1
   wellPullRadius: 15
-  wellPullStrength: 25
+  wellPullStrength: 15
   wellPullPerLevel: 0.6
   wellCorePullMultiplier: 2
   wellSpeed: {x: 0.3, y: 0.6}
@@ -544,7 +544,7 @@ MonoBehaviour:
   - {r: 0.3, g: 0.9, b: 1, a: 1}
   - {r: 0.55, g: 0.65, b: 1, a: 1}
   - {r: 0.55, g: 1, b: 0.8, a: 1}
-  ballSize: 0.42
+  ballSize: 0.32
   chainColor: {r: 0.78, g: 0.7, b: 0.52, a: 1}
   spinSpeed: 160
   spinClockwise: 0

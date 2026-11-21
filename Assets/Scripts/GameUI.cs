@@ -102,18 +102,6 @@ public partial class GameUI : MonoBehaviour
     MenuButton retryButton;
     Strip pauseStrip, gameOverStrip;
 
-    class Card
-    {
-        public VisualElement root, inner, sealedPart, openPart, flash, nextPip;
-        public Label bigQuestion;
-        public Color color;
-        public bool hover, mystery, rare;
-        public VisualElement ribbon, shimmer;
-    }
-    readonly List<Card> cards = new List<Card>();
-    VisualElement cardRow;
-    int builtOffer = -1;
-    bool revealPending;   // a Character box is sealed: play the reveal sound when it opens
 
     // ------------------------------------------------------------------ setup
 
@@ -154,7 +142,6 @@ public partial class GameUI : MonoBehaviour
     {
         root.Clear();
         buttons.Clear();
-        cards.Clear();
         floaters.Clear();
         builtOffer = -1;
         shownLevel = -1;
@@ -169,7 +156,9 @@ public partial class GameUI : MonoBehaviour
         BuildComplete();
         BuildGameOver();
         BuildUpgrade();
+        BuildAnnounce();
         BuildIndex();
+        BuildStory();   // last: it covers everything
     }
 
     void OnDestroy()
@@ -393,6 +382,8 @@ public partial class GameUI : MonoBehaviour
         starPips.row.style.justifyContent = Justify.FlexStart;
 
         shellsRow = Row(left);
+        shellsRow.style.flexWrap = Wrap.Wrap;
+        shellsRow.style.maxWidth = 360;
         shellsRow.style.minHeight = 22;
         shellsRow.style.marginTop = 4;
 
@@ -476,9 +467,10 @@ public partial class GameUI : MonoBehaviour
         titleBest.style.marginTop = 12;
         titleBest.style.letterSpacing = 3;
 
-        var buttonsCol = Column(titleScreen, 50f);
+        var buttonsCol = Column(titleScreen, 45f);
         Button(buttonsCol, ProcSprites.Arrow, Loc.T("PLAY", "OYNA"), Loc.T("SPACE", "BOŞLUK"), Pickup.OrbColor, true, () => gm.NewRun());
         Button(buttonsCol, ProcSprites.Photon, Loc.T("INDEX", "DİZİN"), "I", Pickup.Gold, false, () => OpenIndex());
+        Button(buttonsCol, null, Loc.T("STORY", "HİKÂYE"), null, Dim, false, () => gm.PlayStory());
         quitButtonRoot = Button(buttonsCol, null, Loc.T("QUIT", "ÇIKIŞ"), null, Dim, false, () => gm.QuitApp()).root;
 
         // Top-right: language switch.
@@ -626,295 +618,6 @@ public partial class GameUI : MonoBehaviour
         Text(newRunColumn, Loc.T("new run", "yeni oyun"), 15, false, Dim).style.marginTop = 4;
     }
 
-    void BuildUpgrade()
-    {
-        upgradeScreen = Layer(root);
-        upgradeScreen.style.backgroundColor = new Color(0f, 0f, 0.02f, 0.6f);
-
-        // Picks left: one coin per pick (refund picks use the character's color).
-        var top = Column(upgradeScreen, 16f);
-        upgradePicks = MakePips(top, ProcSprites.Quanta, 34, 8, 700);
-
-        var column = Column(upgradeScreen, 31f);
-        cardRow = Row(column);
-        cardRow.style.alignItems = Align.Stretch;
-        cardRow.style.justifyContent = Justify.Center;
-        cardRow.style.paddingLeft = cardRow.style.paddingRight = 20;
-        cardRow.style.alignSelf = Align.Stretch;
-    }
-
-    // ----------------------------------------------------------------- cards
-
-    void RebuildCards()
-    {
-        builtOffer = gm.OfferVersion;
-        cardRow.Clear();
-        cards.Clear();
-
-        var offer = gm.Offer;
-        revealPending = false;
-        if (gm.MysteryIndex >= 0)
-        {
-            Sfx.PlaySuspense(MysteryReveal, 0.9f);   // lasts exactly until the box opens
-            revealPending = true;
-        }
-        for (int i = 0; i < offer.Count; i++)
-            cards.Add(i == gm.MysteryIndex ? MakeMysteryCard(i, offer[i])
-                    : GameManager.IsRare(offer[i]) ? MakeRareCard(i, offer[i])
-                    : MakeCard(i, offer[i]));
-    }
-
-    /// <summary>Seconds until a Character box opens (shared by the animation and the sounds).</summary>
-    float MysteryReveal => Mathf.Max(0.5f, gm.MysteryRevealTime);
-
-    Card NewCardShell(int index)
-    {
-        var card = new Card();
-        var e = new VisualElement { pickingMode = PickingMode.Position };
-        e.style.width = 220;
-        e.style.minHeight = 250;
-        e.style.flexShrink = 1;
-        e.style.marginLeft = e.style.marginRight = 10;
-        e.style.alignItems = Align.Center;
-        Radius(e, 10);
-        e.RegisterCallback<PointerEnterEvent>(_ => card.hover = true);
-        e.RegisterCallback<PointerLeaveEvent>(_ => card.hover = false);
-        e.RegisterCallback<PointerDownEvent>(ev =>
-        {
-            if (ev.button == 0) gm.ChooseUpgrade(index);   // GameManager ignores it while sealed / too early
-        });
-        cardRow.Add(e);
-        card.root = e;
-        return card;
-    }
-
-    /// <summary>Icon, title, a short line or two, level pips and the key that picks it.</summary>
-    void CardFace(Card card, VisualElement parent, int index, GameManager.UpgradeType u, float iconTop)
-    {
-        var icon = Icon(parent, IconFor(u), 56, card.color);
-        icon.style.marginTop = iconTop;
-        var title = Text(parent, GameManager.UpgradeTitle(u), 20, true, card.color, TextAnchor.MiddleCenter, true);
-        title.style.marginTop = 10;
-        title.style.minHeight = 30;
-        var desc = Text(parent, gm.UpgradeDescription(u), 16, false, Color.white, TextAnchor.UpperCenter, true);
-        desc.style.marginTop = 2;
-        desc.style.flexGrow = 1;
-
-        if (gm.UpgradeLevels(u, out int owned, out int cap))
-        {
-            // Filled = owned, blinking = this pick, hollow = still to come (no limit: just owned + 1).
-            int total = cap < 0 ? Mathf.Min(owned + 1, 12) : cap;
-            var pips = Row(parent);
-            pips.style.marginTop = 8;
-            pips.style.marginBottom = 4;
-            for (int i = 0; i < total; i++)
-            {
-                var dot = Icon(pips, ProcSprites.Ball, 11, i < owned ? card.color : Faint);
-                dot.style.marginLeft = dot.style.marginRight = 2;
-                if (i == owned) card.nextPip = dot;
-            }
-        }
-        var key = Keycap(parent, (index + 1).ToString(), 26);
-        key.style.marginTop = 6;
-        key.style.marginBottom = 4;
-    }
-
-    Card MakeCard(int index, GameManager.UpgradeType u)
-    {
-        Card card = NewCardShell(index);
-        card.color = GameManager.UpgradeColor(u);
-        VisualElement e = card.root;
-        e.style.paddingLeft = e.style.paddingRight = 10;
-        e.style.paddingBottom = 6;
-        Border(e, 2f, Color.clear);
-        e.style.borderTopWidth = 6;
-        e.style.borderTopColor = card.color;
-        CardFace(card, e, index, u, 18);
-        return card;
-    }
-
-    static Sprite IconFor(GameManager.UpgradeType u)
-    {
-        switch (u)
-        {
-            case GameManager.UpgradeType.Heal:
-            case GameManager.UpgradeType.MaxHealth:
-            case GameManager.UpgradeType.Regeneration:
-            case GameManager.UpgradeType.HealthRecycler: return ProcSprites.Stability;
-            case GameManager.UpgradeType.CoinRecycler:
-            case GameManager.UpgradeType.Challenger: return ProcSprites.Quanta;
-            case GameManager.UpgradeType.Insight: return ProcSprites.Asteroid(0);
-            case GameManager.UpgradeType.BallArmor:
-            case GameManager.UpgradeType.BallSize:
-            case GameManager.UpgradeType.Sluggish: return ProcSprites.Ball;
-            case GameManager.UpgradeType.PickupRange: return ProcSprites.Photon;
-            case GameManager.UpgradeType.Torque: return ProcSprites.TurnArrow;
-            case GameManager.UpgradeType.Repel:
-            case GameManager.UpgradeType.TurretRange: return ProcSprites.Ring;
-            case GameManager.UpgradeType.FireRate:
-            case GameManager.UpgradeType.Spaceship: return ProcSprites.Trefoil;
-            default: return ProcSprites.Arrow;
-        }
-    }
-
-    /// <summary>
-    /// Rare card: its own tier, between Normal cards and Characters. Prismatic border that
-    /// cycles through colors, a "RARE" ribbon, and a light sweep across the face.
-    /// </summary>
-    Card MakeRareCard(int index, GameManager.UpgradeType u)
-    {
-        Card card = NewCardShell(index);
-        card.rare = true;
-        card.color = GameManager.UpgradeColor(u);
-        VisualElement e = card.root;
-        e.style.overflow = Overflow.Hidden;
-        e.style.paddingLeft = e.style.paddingRight = 10;
-        e.style.paddingBottom = 6;
-        e.style.backgroundColor = new Color(0.07f, 0.05f, 0.13f, 0.96f);
-        Border(e, 3f, Color.white);
-        e.style.borderTopWidth = 0;
-
-        // Light sweep (drawn under the content).
-        card.shimmer = Box(e);
-        card.shimmer.style.position = Position.Absolute;
-        card.shimmer.style.top = -40;
-        card.shimmer.style.bottom = -40;
-        card.shimmer.style.width = 36;
-        card.shimmer.style.rotate = new Rotate(20f);
-        card.shimmer.style.backgroundColor = new Color(1f, 1f, 1f, 0.07f);
-
-        // Ribbon across the top.
-        card.ribbon = Box(e);
-        card.ribbon.style.alignSelf = Align.Stretch;
-        card.ribbon.style.marginLeft = card.ribbon.style.marginRight = -10;
-        card.ribbon.style.height = 24;
-        card.ribbon.style.justifyContent = Justify.Center;
-        var tag = Text(card.ribbon, Loc.T("RARE", "NADİR"), 15, true, new Color(0.08f, 0.05f, 0.12f));
-        tag.style.letterSpacing = 6;
-        tag.style.textShadow = new TextShadow { color = Color.clear };
-
-        CardFace(card, e, index, u, 12);
-        return card;
-    }
-
-    /// <summary>The Character card: a sealed box that trembles and swells, then bursts open.</summary>
-    Card MakeMysteryCard(int index, GameManager.UpgradeType u)
-    {
-        Card card = NewCardShell(index);
-        card.mystery = true;
-        card.color = GameManager.UpgradeColor(u);
-        VisualElement e = card.root;
-        Border(e, 4f, CardGold);
-
-        // Inner thin frame.
-        card.inner = Layer(e);
-        card.inner.style.left = card.inner.style.right = card.inner.style.top = card.inner.style.bottom = 9;
-        Border(card.inner, 1.5f, WithAlpha(CardGold, 0.45f));
-        Radius(card.inner, 6);
-
-        // Revealed contents (in the layout flow so the card fits the text; hidden until open).
-        card.openPart = Box(e);
-        card.openPart.style.alignItems = Align.Center;
-        card.openPart.style.flexGrow = 1;
-        card.openPart.style.paddingTop = 14;
-        card.openPart.style.paddingLeft = card.openPart.style.paddingRight = 14;
-        card.openPart.style.paddingBottom = 10;
-        var tierTag = Text(card.openPart, Loc.T("CHARACTER", "KARAKTER"), 15, true, CardGold);
-        tierTag.style.letterSpacing = 4;
-        CardFace(card, card.openPart, index, u, 8);
-        // Cost: two coins, placed above the key.
-        var cost = Row(null);
-        Icon(cost, ProcSprites.Quanta, 20, Pickup.CoinColor);
-        Icon(cost, ProcSprites.Quanta, 20, Pickup.CoinColor).style.marginLeft = 3;
-        cost.style.marginTop = 6;
-        card.openPart.Insert(card.openPart.childCount - 1, cost);
-
-        // Sealed box: lid seam and a big pulsing "?".
-        card.sealedPart = Layer(e);
-        var seam = Box(card.sealedPart);
-        seam.style.position = Position.Absolute;
-        seam.style.left = seam.style.right = 0;
-        seam.style.top = Length.Percent(30);
-        seam.style.height = 2;
-        seam.style.backgroundColor = WithAlpha(CardGold, 0.6f);
-        card.bigQuestion = Text(card.sealedPart, "?", 90, true, CardGold);
-        card.bigQuestion.style.position = Position.Absolute;
-        card.bigQuestion.style.left = card.bigQuestion.style.right = 0;
-        card.bigQuestion.style.top = Length.Percent(28);
-        card.bigQuestion.style.height = Length.Percent(60);
-
-        // White flash when it opens.
-        card.flash = Layer(e);
-        card.flash.style.backgroundColor = Color.white;
-        card.flash.style.opacity = 0f;
-        Radius(card.flash, 10);
-        return card;
-    }
-
-    void UpdateCards()
-    {
-        if (builtOffer != gm.OfferVersion) RebuildCards();
-
-        float T = gm.StateTime, R = MysteryReveal;
-        if (revealPending && T >= R)
-        {
-            revealPending = false;
-            if (gm.MysteryIndex >= 0 && gm.MysteryIndex < gm.Offer.Count)
-                Codex.See(Codex.Upgrade(gm.Offer[gm.MysteryIndex]));
-            Sfx.Play("reveal", 0.9f);
-        }
-        float ut = Time.unscaledTime;
-        foreach (var card in cards)
-        {
-            VisualElement e = card.root;
-            if (card.nextPip != null)
-                card.nextPip.style.unityBackgroundImageTintColor = WithAlpha(card.color, 0.25f + 0.75f * Blink);
-            if (card.rare)
-            {
-                // Prismatic border + ribbon, gentle bob, light sweep every couple of seconds.
-                Color prism = Color.HSVToRGB(Mathf.Repeat(ut * 0.22f, 1f), 0.45f, 1f);
-                e.style.borderLeftColor = e.style.borderRightColor = e.style.borderBottomColor = prism;
-                card.ribbon.style.backgroundColor = prism;
-                e.style.backgroundColor = new Color(0.07f, 0.05f, 0.13f, card.hover ? 1f : 0.96f);
-                float lift = card.hover ? -6f : -2f * (0.5f + 0.5f * Mathf.Sin(ut * 2.5f));
-                e.style.translate = new Translate(0f, lift);
-                float sweep = Mathf.Repeat(ut * 0.45f, 1f);   // 0..1, visible for the first part of the cycle
-                card.shimmer.style.left = Mathf.Lerp(-60f, 300f, Mathf.Clamp01(sweep * 1.6f));
-                continue;
-            }
-            if (!card.mystery)
-            {
-                e.style.backgroundColor = new Color(0.08f, 0.09f, 0.16f, card.hover ? 0.98f : 0.9f);
-                Color side = card.hover ? card.color : Color.clear;
-                e.style.borderLeftColor = e.style.borderRightColor = e.style.borderBottomColor = side;
-                e.style.translate = new Translate(0f, card.hover ? -6f : 0f);
-                continue;
-            }
-
-            bool revealed = T >= R;
-            // Still for the first quarter, then shake + grow until the reveal.
-            float build = Mathf.Clamp01((T - R * 0.25f) / (R * 0.75f));
-            float scale = revealed ? 1.1f + 0.06f * Mathf.Clamp01(1f - (T - R) / 0.25f) : 1f + 0.16f * build * build;
-            float amp = revealed ? 0f : 9f * build * build;
-            e.style.scale = new Scale(new Vector3(scale, scale, 1f));
-            e.style.translate = new Translate(Mathf.Sin(ut * 61f) * amp, Mathf.Cos(ut * 47f) * amp * 0.6f);
-
-            Color c = revealed ? card.color : CardGold;
-            e.style.backgroundColor = revealed ? new Color(0.12f, 0.08f, 0.14f, 0.98f) : new Color(0.16f, 0.12f, 0.05f, 0.98f);
-            e.style.borderLeftColor = e.style.borderRightColor = e.style.borderTopColor = e.style.borderBottomColor = c;
-            Border(card.inner, 1.5f, WithAlpha(CardGold, card.hover && revealed ? 0.9f : 0.45f));
-
-            card.openPart.style.visibility = revealed ? Visibility.Visible : Visibility.Hidden;
-            Show(card.sealedPart, !revealed);
-            if (!revealed)
-            {
-                float pulse = 0.6f + 0.4f * Mathf.Sin(ut * (4f + 14f * build));
-                card.bigQuestion.style.color = WithAlpha(CardGold, pulse);
-            }
-            card.flash.style.opacity = revealed ? Mathf.Clamp01(1f - (T - R) / 0.35f) : 0f;
-        }
-    }
-
     // ---------------------------------------------------------------- update
 
     void LateUpdate()
@@ -922,7 +625,7 @@ public partial class GameUI : MonoBehaviour
         if (root == null || gm == null) return;
         var st = gm.CurrentState;
 
-        Show(hud, st != GameManager.State.Title);
+        Show(hud, st != GameManager.State.Title && st != GameManager.State.Story);
         Show(titleScreen, st == GameManager.State.Title);
         Show(introScreen, st == GameManager.State.Playing && gm.LevelTime < 2.5f);
         Show(pauseScreen, st == GameManager.State.Paused);
@@ -930,8 +633,11 @@ public partial class GameUI : MonoBehaviour
         Show(gameOverScreen, st == GameManager.State.GameOver);
         Show(upgradeScreen, st == GameManager.State.Upgrade);
 
-        if (st != GameManager.State.Title) UpdateHud(st);
+        if (st != GameManager.State.Title && st != GameManager.State.Story) UpdateHud(st);
         UpdateIndex(st);
+        UpdateUpgradeWorld(st);
+        UpdateAnnounce(st);
+        UpdateStory(st);
         UpdateButtons();
 
         switch (st)
@@ -995,13 +701,14 @@ public partial class GameUI : MonoBehaviour
 
             case GameManager.State.Upgrade:
             {
+                // Picks still waiting (the one in the atom is already spent).
                 bool refund = gm.ChoiceIndex >= gm.CoinChoices && gm.RefundTotal > 0;
                 Color rc = GameManager.UpgradeColor(GameManager.CharacterCard(gm.ActiveCharacter));
                 if (refund)
-                    upgradePicks.Set(gm.RefundTotal, gm.RefundTotal - (gm.ChoiceIndex - gm.CoinChoices), rc, Faint);
+                    upgradePicks.Set(gm.RefundTotal, gm.RefundTotal - (gm.ChoiceIndex - gm.CoinChoices) - 1, rc, Faint);
                 else
-                    upgradePicks.Set(gm.CoinChoices, gm.CoinChoices - gm.ChoiceIndex, Pickup.CoinColor, Faint);
-                UpdateCards();
+                    upgradePicks.Set(gm.CoinChoices, gm.CoinChoices - gm.ChoiceIndex - 1, Pickup.CoinColor, Faint);
+                UpdateAtomPicker();
                 break;
             }
         }
@@ -1009,14 +716,6 @@ public partial class GameUI : MonoBehaviour
 
     // ------------------------------------------------------------ element tile
 
-    static readonly string[] ElementSymbols =
-        { "H", "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne", "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar" };
-    static readonly string[] ElementNamesEn =
-        { "Hydrogen ion", "Hydrogen", "Helium", "Lithium", "Beryllium", "Boron", "Carbon", "Nitrogen", "Oxygen", "Fluorine",
-          "Neon", "Sodium", "Magnesium", "Aluminium", "Silicon", "Phosphorus", "Sulfur", "Chlorine", "Argon" };
-    static readonly string[] ElementNamesTr =
-        { "Hidrojen iyonu", "Hidrojen", "Helyum", "Lityum", "Berilyum", "Bor", "Karbon", "Azot", "Oksijen", "Flor",
-          "Neon", "Sodyum", "Magnezyum", "Alüminyum", "Silisyum", "Fosfor", "Kükürt", "Klor", "Argon" };
     static readonly Color RadiumGlow = new Color(0.6f, 1f, 0.45f);
 
     VisualElement elementTile;
@@ -1058,21 +757,20 @@ public partial class GameUI : MonoBehaviour
         int electrons = pc != null ? pc.BallCount + pc.TurretCount : 0;
         bool radium = gm.ActiveCharacter == GameManager.Character.Spaceship;
         bool ion = gm.ActiveCharacter == GameManager.Character.Challenger || (!radium && electrons == 0);
-        int key = radium ? 88 : ion ? 0 : Mathf.Clamp(electrons, 1, ElementSymbols.Length - 1);
+        int key = radium ? 88 : ion ? 0 : electrons;
 
         if (key != shownElement)
         {
             bool gained = key > shownElement && shownElement != -999;
             shownElement = key;
             elementPop = 1f;
-            bool noble = key == 2 || key == 10 || key == 18;   // a full shell
+            bool noble = !radium && Elements.IsNoble(key);   // a full shell
             Color accent = radium ? RadiumGlow : ion ? Danger : noble ? Pickup.Gold : Pickup.OrbColor;
             elementNumber.text = radium ? "88" : (ion ? 1 : key).ToString();
-            elementSymbol.text = radium ? "Ra" : ElementSymbols[key];
+            elementSymbol.text = radium ? "Ra" : Elements.Symbol(ion ? 1 : key);
             elementCharge.text = ion ? "+" : "";
             elementCharge.style.color = accent;
-            elementName.text = radium ? Loc.T("Radium", "Radyum")
-                                      : (Loc.Current == Language.Turkish ? ElementNamesTr[key] : ElementNamesEn[key]);
+            elementName.text = radium ? Loc.T("Radium", "Radyum") : Elements.Name(key);
             elementSymbol.style.color = accent;
             Border(elementTile, noble || radium ? 2.5f : 1.5f, WithAlpha(accent, noble || radium ? 0.95f : 0.55f));
             if (gained && noble && pc != null)   // shell completed: celebrate the noble gas
@@ -1201,6 +899,8 @@ public partial class GameUI : MonoBehaviour
             for (int s = 0; s < pc.ShellTotal; s++)
             {
                 var group = Row(shellsRow);
+                group.style.flexWrap = Wrap.Wrap;
+                group.style.marginBottom = 3;
                 if (s > 0 || pc.TurretSlots > 0) group.style.marginLeft = 10;
                 Color c = pc.ShellColor(s);
                 for (int i = 0; i < pc.ShellCapacity(s); i++)

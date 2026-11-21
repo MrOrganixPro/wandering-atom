@@ -387,6 +387,93 @@ public static class ProcSprites
         return Gray(v, a);
     });
 
+    // ----------------------------------------------------------- big atom (upgrade screen)
+
+    /// <summary>The upgrade screen's quanta atom: orbit half-axes in sprite units ([-1, 1] across).</summary>
+    public const float AtomA = 0.96f, AtomB = 0.384f;
+    const float PetalInset = 0.02f;   // gap between a petal and the orbit lines around it
+
+    /// <summary>Approximate signed distance to orbit k (tilted k * 60 degrees), positive inside.</summary>
+    public static float AtomOrbitInside(float x, float y, int k)
+    {
+        float t = k * 60f * Mathf.Deg2Rad;
+        float c = Mathf.Cos(t), sn = Mathf.Sin(t);
+        float u = x * c + y * sn, w = -x * sn + y * c;
+        const float A2 = AtomA * AtomA, B2 = AtomB * AtomB;
+        float f = Mathf.Sqrt(u * u / A2 + w * w / B2);
+        float g = Mathf.Sqrt(u * u / (A2 * A2) + w * w / (B2 * B2)) / Mathf.Max(f, 1e-4f);
+        return (1f - f) / Mathf.Max(g, 1e-4f);
+    }
+
+    /// <summary>
+    /// Signed distance (positive inside) to petal 0: the tip of orbit 0 that sticks out past the
+    /// other two orbits, on the +x side. Petal k is this shape turned by k * 60 degrees.
+    /// </summary>
+    static float PetalInside(float x, float y)
+    {
+        float d = Mathf.Min(AtomOrbitInside(x, y, 0), Mathf.Min(-AtomOrbitInside(x, y, 1), -AtomOrbitInside(x, y, 2)));
+        return x > 0f ? d - PetalInset : -1f;
+    }
+
+    /// <summary>Which petal (0..5, pointing at index * 60 degrees) contains the point, or -1.</summary>
+    public static int AtomPetalAt(float x, float y)
+    {
+        for (int k = 0; k < 3; k++)
+        {
+            if (AtomOrbitInside(x, y, k) <= 0f) continue;
+            if (AtomOrbitInside(x, y, (k + 1) % 3) >= 0f || AtomOrbitInside(x, y, (k + 2) % 3) >= 0f) continue;
+            float t = k * 60f * Mathf.Deg2Rad;
+            return x * Mathf.Cos(t) + y * Mathf.Sin(t) > 0f ? k : k + 3;
+        }
+        return -1;
+    }
+
+    /// <summary>The three orbits as thin glowing lines.</summary>
+    public static Sprite AtomOrbits => Build("AtomOrbits", 768, 768, 768f, (x, y) =>
+    {
+        float a = 0f;
+        for (int k = 0; k < 3; k++)
+        {
+            float d = Mathf.Abs(AtomOrbitInside(x, y, k));
+            a = Mathf.Max(a, Mathf.Max(AA(0.006f - d, 0.004f), 0.3f * Mathf.Exp(-(d / 0.025f) * (d / 0.025f))));
+        }
+        return new Color(1f, 1f, 1f, a);
+    });
+
+    /// <summary>Petal 0's fill: brighter toward the outer tip.</summary>
+    public static Sprite AtomPetal => Build("AtomPetal", 512, 512, 512f, (x, y) =>
+    {
+        float cov = AA(PetalInside(x, y), 0.006f);
+        float toward = Mathf.InverseLerp(0.4f, AtomA, x);
+        return new Color(1f, 1f, 1f, cov * (0.5f + 0.5f * toward * toward));
+    });
+
+    /// <summary>Petal 0's outline.</summary>
+    public static Sprite AtomPetalEdge => Build("AtomPetalEdge", 512, 512, 512f, (x, y) =>
+    {
+        float d = PetalInside(x, y);
+        if (x <= 0f) return Color.clear;
+        return new Color(1f, 1f, 1f, AA(0.006f - Mathf.Abs(d), 0.004f));
+    });
+
+    /// <summary>Padlock (locked petals).</summary>
+    public static Sprite Lock => Build("Lock", 128, 128, 128f, (x, y) =>
+    {
+        // Body: rounded rectangle.
+        float qx = Mathf.Abs(x) - 0.62f + 0.14f, qy = Mathf.Abs(y + 0.32f) - 0.44f + 0.14f;
+        float body = -(new Vector2(Mathf.Max(qx, 0f), Mathf.Max(qy, 0f)).magnitude + Mathf.Min(Mathf.Max(qx, qy), 0f) - 0.14f);
+        // Shackle: upper half of a ring, with legs down into the body.
+        float ry = Mathf.Max(0f, y - 0.25f);
+        float ring = 0.1f - Mathf.Abs(new Vector2(x, ry).magnitude - 0.38f);
+        if (y < 0.12f) ring = -1f;
+        // Keyhole cut out of the body.
+        float round = 0.11f - new Vector2(x, y + 0.24f).magnitude;
+        float slot = Mathf.Min(0.05f - Mathf.Abs(x), Mathf.Min(y + 0.55f, -0.24f - y));
+        float hole = Mathf.Max(round, slot);
+        float shape = Mathf.Max(Mathf.Min(body, -hole), ring);
+        return new Color(1f, 1f, 1f, AA(shape, 0.025f));
+    });
+
     /// <summary>Stability (health): a calm, tightly bound nucleus inside a closed ring.</summary>
     public static Sprite Stability => Build("Stability", 128, 128, 128f, (x, y) =>
     {

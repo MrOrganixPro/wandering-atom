@@ -80,24 +80,24 @@ public partial class GameUI
 
         list.Add(new Entry { id = Codex.Enemy(EnemyType.Shard), sprite = ProcSprites.Shard, color = shard, demo = Demo.Shard,
             name = Loc.T("FREE RADICAL", "SERBEST RADİKAL"),
-            desc = Loc.T("A reactive fragment with one unpaired electron. Flies straight at you, sometimes in cosmic ray showers. One electron stops one radical.",
-                         "Eşleşmemiş tek elektronlu, tepkin bir parça. Sana dümdüz uçar, bazen kozmik ışın sağanağıyla gelir. Bir elektron bir radikali durdurur.") });
+            desc = Loc.T("A reactive fragment with one unpaired electron. Flies straight at you, sometimes in cosmic ray showers. It bonds with the first electron it touches and carries it off.",
+                         "Eşleşmemiş tek elektronlu, tepkin bir parça. Sana dümdüz uçar, bazen kozmik ışın sağanağıyla gelir. Dokunduğu ilk elektronla bağ kurup onu alıp götürür.") });
         list.Add(new Entry { id = Codex.Enemy(EnemyType.Brute), sprite = ProcSprites.Alpha, color = brute, demo = Demo.Brute,
             name = Loc.T("ALPHA PARTICLE", "ALFA PARÇACIĞI"),
-            desc = Loc.T("Two protons, two neutrons: heavy and slow. Takes two hits and shoves you twice as hard.",
-                         "İki proton, iki nötron: ağır ve yavaş. İki vuruşa dayanır ve seni iki kat sert iter.") });
+            desc = Loc.T("Two protons, two neutrons: heavy and slow, and it shoves you twice as hard. It snatches an electron and keeps coming; with a second one it becomes helium and leaves.",
+                         "İki proton, iki nötron: ağır ve yavaş, seni iki kat sert iter. Bir elektron kapar ve gelmeye devam eder; ikincisini de alınca helyuma dönüşüp gider.") });
         list.Add(new Entry { id = Codex.Enemy(EnemyType.Missile), sprite = ProcSprites.Positron, color = missile, demo = Demo.Missile,
             name = Loc.T("POSITRON", "POZİTRON"),
-            desc = Loc.T("Antimatter. Its opposite charge pulls it after you forever, and it annihilates an electron on contact. A Repel blast breaks its pull.",
-                         "Antimadde. Zıt yükü onu peşinden hiç ayırmaz; dokunduğu elektronu yok eder. İtme patlaması çekimini koparır.") });
+            desc = Loc.T("Antimatter. Its opposite charge pulls it after you forever. When it catches an electron the two circle each other as positronium, then annihilate in a flash. A Repel blast breaks its pull.",
+                         "Antimadde. Zıt yükü onu peşinden hiç ayırmaz. Bir elektron yakalarsa ikisi pozitronyum olarak birbirinin etrafında döner, sonra bir parlamayla yok olurlar. İtme patlaması çekimini koparır.") });
         list.Add(new Entry { id = Codex.Enemy(EnemyType.Flash), sprite = ProcSprites.Gamma, color = flash, demo = Demo.Flash,
             name = Loc.T("GAMMA RAY", "GAMA IŞINI"),
-            desc = Loc.T("Appears at the edge and aims. When the line locks, it strikes at light speed. Move!",
-                         "Kenarda belirip nişan alır. Çizgi sabitlenince ışık hızında vurur. Kaç!") });
+            desc = Loc.T("Appears at the edge and aims. When the line locks, it strikes once at light speed, piercing up to 3 targets and knocking electrons out. Sometimes they come as a Gamma Rain. Move!",
+                         "Kenarda belirip nişan alır. Çizgi sabitlenince ışık hızında bir kez vurur; 3 hedefe kadar delip geçer ve elektronları koparır. Bazen Gama Yağmuru olarak gelirler. Kaç!") });
         list.Add(new Entry { id = Codex.Enemy(EnemyType.Broken), sprite = ProcSprites.Isotope, color = broken, demo = Demo.Broken,
             name = Loc.T("UNSTABLE ISOTOPE", "KARARSIZ İZOTOP"),
-            desc = Loc.T("Each decay flings it at you, weaker every time, until it turns stable and drifts. Takes two hits.",
-                         "Her bozunma onu sana fırlatır, her seferinde daha zayıf; sonunda kararlı hâle gelip sürüklenir. İki vuruşa dayanır.") });
+            desc = Loc.T("Each decay flings it at you, weaker every time, until it turns stable and drifts. Its first hit shakes an electron loose; its second takes one with it.",
+                         "Her bozunma onu sana fırlatır, her seferinde daha zayıf; sonunda kararlı hâle gelip sürüklenir. İlk vuruşu bir elektronu koparır, ikincisi birini alıp götürür.") });
         list.Add(new Entry { id = Codex.Hazard(HazardType.Asteroid), sprite = ProcSprites.Asteroid(0), color = RockColor, demo = Demo.Asteroid,
             name = Loc.T("DUST GRAIN", "TOZ TANESİ"),
             desc = Loc.T("To an atom, a mountain. Unbreakable: crushes enemies, chips your electrons and bounces you away.",

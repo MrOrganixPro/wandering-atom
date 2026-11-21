@@ -33,6 +33,15 @@ public class PendulumController : MonoBehaviour
     public Color driveColor = new Color(0.6f, 0.88f, 1f);
     [Tooltip("Seconds the core shakes unstably after losing all stability, before it explodes.")]
     public float meltdownTime = 1.2f;
+    [Header("Nucleus (grows with the element; look only, the hit radius stays coreRadius)")]
+    public Color protonColor = new Color(1f, 0.62f, 0.45f);
+    public Color neutronColor = new Color(0.62f, 0.6f, 0.58f);
+    [Tooltip("Visual radius of a lone proton (hydrogen).")]
+    public float nucleusBaseRadius = 0.27f;
+    [Tooltip("Visual radius added per square root of the nucleon count.")]
+    public float nucleusGrowth = 0.06f;
+    public float nucleusMaxRadius = 0.72f;
+
     [Tooltip("Base acceleration (upgradable).")]
     public float thrustAcceleration = 10f;
     [Tooltip("How quickly the thruster drifts to a stop.")]
@@ -53,7 +62,7 @@ public class PendulumController : MonoBehaviour
     public int[] shellCapacities = { 2, 8 };
     public float[] shellLengths = { 1.3f, 2.3f };
     public Color[] shellColors = { new Color(0.3f, 0.9f, 1f), new Color(0.55f, 0.65f, 1f), new Color(0.55f, 1f, 0.8f) };
-    public float ballSize = 0.42f;
+    public float ballSize = 0.32f;
     public Color chainColor = new Color(0.78f, 0.7f, 0.52f);
     [Tooltip("Automatic spin speed of the hub (degrees per second).")]
     public float spinSpeed = 160f;
@@ -175,6 +184,8 @@ public class PendulumController : MonoBehaviour
     /// <summary>Spaceship: turret slots (0 = no turrets) and how many are built.</summary>
     public int TurretSlots => turretSlots;
     public int TurretCount => turretCount;
+    /// <summary>The element the atom is right now: its electron count (0 = bare hydrogen ion); Radium (88) with emitters.</summary>
+    public int AtomicNumber => turretSlots > 0 ? 88 : balls.Count + turretCount;
     float TurretRangeNow => turretRange + turretRangeBonus;
 
     /// <summary>Length of the outermost rope in use (how far the balls reach).</summary>
@@ -313,6 +324,7 @@ public class PendulumController : MonoBehaviour
 
         podGlow = NewSprite("CoreGlow", pod, ProcSprites.Glow, new Color(podColor.r, podColor.g, podColor.b, 0.35f), 4, 1.3f);
         podBody = NewSprite("Nucleus", pod, ProcSprites.Nucleus, podColor, 5, coreRadius * 2.3f);
+        podBody.enabled = false;   // its transform carries the nucleon cluster (see UpdateNucleus)
 
         // World-space root for electrons and their bonds (not parented to the core, so they can lag and swing).
         ropeRoot = new GameObject("PendulumBalls").transform;
@@ -405,6 +417,10 @@ public class PendulumController : MonoBehaviour
         repelTimer -= dt;
         boostTimer -= dt;
 
+        // Upgrade screen: the core is shown in the UI instead; the electrons fade out meanwhile.
+        presence = Mathf.MoveTowards(presence, upgradeHidden ? 0f : 1f, Time.unscaledDeltaTime / 0.35f);
+        if (alive && pod.gameObject.activeSelf == upgradeHidden) pod.gameObject.SetActive(!upgradeHidden);
+
         if (alive && !meltingDown && Time.timeScale > 0f) ReadInput();   // no input while paused
         else if (!alive || meltingDown) { thrust = Vector2.zero; EndDrag(); }
         if (meltingDown) pivotVel *= Mathf.Exp(-4f * dt);   // grinds to a halt while it comes apart
@@ -419,6 +435,88 @@ public class PendulumController : MonoBehaviour
         }
         UpdateVisuals(dt);
         if (meltingDown) UpdateMeltdown(dt);
+        UpdateNucleus(dt);
+    }
+
+    // ---------------------------------------------------------------- nucleus
+
+    const int MaxNucleons = 150;
+    readonly List<SpriteRenderer> nucleons = new List<SpriteRenderer>();
+    float nucleusShown = 1f;   // eased nucleon count (fractional while it grows or shrinks)
+    float nucleusRadius = 0.3f;
+
+    /// <summary>Set by the UI while upgrades play: the core leaves the map (shown in the UI) and the electrons fade.</summary>
+    [HideInInspector] public bool upgradeHidden;
+    float presence = 1f;
+    void Fade(SpriteRenderer sr) { Color c = sr.color; c.a *= presence; sr.color = c; }
+
+    /// <summary>Nucleons in the core right now (fractional while it grows), and its visual radius in world units.</summary>
+    public float NucleusShown => nucleusShown;
+    public float NucleusRadius => nucleusRadius;
+
+    /// <summary>
+    /// Where nucleon i sits in a cluster of 'count' nucleons of radius R (sunflower packing),
+    /// and how big each nucleon is. Shared with the UI copy of the core.
+    /// </summary>
+    public static Vector2 NucleonLayout(int i, float count, float R, out float diameter)
+    {
+        count = Mathf.Max(1f, count);
+        diameter = Mathf.Min(2f * R, 2f * R / Mathf.Sqrt(count) * 1.2f);
+        float inner = Mathf.Max(0f, R - diameter * 0.5f);
+        float a = i * 2.39996f;                                            // golden angle
+        return new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * inner * Mathf.Sqrt((i + 0.5f) / count);
+    }
+
+    public static bool IsProton(int i) => Mathf.Repeat(i * 0.618034f, 1f) < 0.5f;   // H = 1 proton, He = 2 + 2, ...
+
+    /// <summary>
+    /// The core is a cluster of protons (warm) and neutrons (dim) packed in a sunflower spiral.
+    /// It gains nucleons as the element climbs (mass number of the current electron count), each
+    /// new one popping in. Rides on podBody's transform, so it trembles, spins, throbs in a
+    /// meltdown and takes podBody's color (hit flash, invulnerability blink).
+    /// </summary>
+    void UpdateNucleus(float dt)
+    {
+        if (!pod.gameObject.activeSelf) return;
+        int target = Mathf.Min(MaxNucleons, Elements.MassNumber(Mathf.Max(1, AtomicNumber)));
+        float rate = Mathf.Max(6f, Mathf.Abs(target - nucleusShown) * 2.5f);
+        nucleusShown = Mathf.MoveTowards(nucleusShown, target, dt * rate);
+        int n = Mathf.CeilToInt(nucleusShown - 0.001f);
+        while (nucleons.Count < n)
+            nucleons.Add(NewSprite("Nucleon" + nucleons.Count, podBody.transform, ProcSprites.Ball, Color.clear, 5, 1f));
+
+        float shown = Mathf.Max(1f, nucleusShown);
+        float R = Mathf.Min(nucleusMaxRadius, nucleusBaseRadius + nucleusGrowth * Mathf.Sqrt(shown));
+        float d = Mathf.Min(2f * R, 2f * R / Mathf.Sqrt(shown) * 1.2f);   // nucleon diameter (slightly overlapping)
+        float inner = Mathf.Max(0f, R - d * 0.5f);
+        float unit = 1f / (coreRadius * 2.3f);                             // world -> podBody local
+
+        Color tint = podBody.color;
+        float kr = tint.r / Mathf.Max(0.01f, podColor.r), kg = tint.g / Mathf.Max(0.01f, podColor.g),
+              kb = tint.b / Mathf.Max(0.01f, podColor.b);
+        float t = Time.time;
+        for (int i = 0; i < nucleons.Count; i++)
+        {
+            SpriteRenderer sr = nucleons[i];
+            float grow = Mathf.Clamp01(nucleusShown - i);
+            if (grow <= 0f) { sr.enabled = false; continue; }
+            sr.enabled = true;
+
+            float a = i * 2.39996f;                                        // golden angle
+            float rr = inner * Mathf.Sqrt((i + 0.5f) / shown);
+            Vector2 p = new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * rr;
+            p += new Vector2(Mathf.Sin(t * (5f + i % 7) + i), Mathf.Cos(t * (4.3f + i % 5) + i * 1.7f)) * d * 0.05f;
+            // Inner nucleons sit on top (closer to the camera).
+            sr.transform.localPosition = new Vector3(p.x * unit, p.y * unit, -0.001f * (nucleons.Count - i));
+            float pop = grow < 1f ? grow * (1f + 0.5f * Mathf.Sin(grow * Mathf.PI)) : 1f;
+            sr.transform.localScale = Vector3.one * d * unit * pop;
+
+            bool proton = Mathf.Repeat(i * 0.618034f, 1f) < 0.5f;         // H = 1 proton, He = 2 + 2, ...
+            Color c = proton ? protonColor : neutronColor;
+            sr.color = new Color(Mathf.Clamp01(c.r * kr), Mathf.Clamp01(c.g * kg), Mathf.Clamp01(c.b * kb), tint.a);
+        }
+        nucleusRadius = R;
+        if (!meltingDown) podGlow.transform.localScale = Vector3.one * 1.3f * (R / nucleusBaseRadius) * 0.9f;
     }
 
     /// <summary>Out of stability: the nucleus starts to shake apart (see UpdateMeltdown, Explode).</summary>
@@ -892,6 +990,19 @@ public class PendulumController : MonoBehaviour
                 float shimmer = 0.6f + 0.4f * Mathf.Sin(Time.time * 6f - i * 0.9f);
                 b.links[i].color = new Color(bond.r, bond.g, bond.b, baseA * shimmer);
             }
+
+            // Upgrade screen: the electrons fade off the map while the core is away.
+            if (presence < 1f)
+            {
+                Fade(b.body); Fade(b.glow); Fade(b.armor);
+                foreach (var l in b.links) Fade(l);
+            }
+            bool trailOn = presence > 0.98f;
+            if (b.trail.enabled != trailOn)
+            {
+                b.trail.enabled = trailOn;
+                if (trailOn) b.trail.Clear();
+            }
         }
 
         UpdateThruster(dt);
@@ -1031,34 +1142,46 @@ public class PendulumController : MonoBehaviour
         return false;
     }
 
+    public enum ElectronHit { None, Survived, Taken }
+
     /// <summary>
-    /// If an enemy at p (radius r) touches a ball, the ball takes a hit (destroyed when out of
-    /// hits) and true is returned (the enemy is destroyed either way).
+    /// An enemy at p (radius r) touching an electron: the electron takes a hit. If that was its
+    /// last one it leaves the atom (Taken): it is removed quietly and its position and color are
+    /// returned, so the enemy can show it being snatched or knocked away. Electrons listed in
+    /// 'skip' are passed through (piercing gamma rays); the one hit is added to it.
     /// </summary>
-    public bool TryAbsorbHit(Vector2 p, float r, Color enemyColor)
+    public ElectronHit HitElectron(Vector2 p, float r, out Vector2 takenPos, out Color takenColor, List<object> skip = null)
     {
-        if (!alive || meltingDown) return false;
+        takenPos = p;
+        takenColor = Pickup.OrbColor;
+        if (!alive || meltingDown) return ElectronHit.None;
         float rb = r + BallRadius;
         for (int i = 0; i < balls.Count; i++)
         {
             Ball b = balls[i];
-            if ((b.pos - p).sqrMagnitude >= rb * rb) continue;
-            b.hp--;
-            if (b.hp <= 0)
-            {
-                RemoveBall(i, enemyColor);
-            }
-            else
+            if ((skip != null && skip.Contains(b)) || (b.pos - p).sqrMagnitude >= rb * rb) continue;
+            skip?.Add(b);
+            OnHitReaction();
+            if (--b.hp > 0)
             {
                 b.damageFlash = 1f;
                 ParticleBursts.Burst(b.pos, Color.white, 10, 4f, 0.2f, 0.4f);
                 Sfx.Play("snap", 0.8f);
+                return ElectronHit.Survived;
             }
-            OnHitReaction();
-            return true;
+            takenPos = b.pos;
+            takenColor = ShellColor(b.shell);
+            Sfx.Play("snap");
+            if (GameManager.Instance != null) GameManager.Instance.AddShake(0.15f);
+            Destroy(b.root);
+            balls.RemoveAt(i);
+            return ElectronHit.Taken;
         }
-        return false;
+        return ElectronHit.None;
     }
+
+    /// <summary>Size of an electron on the map (for the snatched copies enemies carry off).</summary>
+    public float ElectronSize => BallWorldSize;
 
     /// <summary>Applies upgrade levels on top of the base (Inspector) values.</summary>
     public void ApplyUpgrades(float speedMultiplier, float thrustMultiplier, float extraCounterThrust,

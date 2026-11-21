@@ -30,7 +30,8 @@ public class Pickup : MonoBehaviour
 
     Action<Pickup> onCollected;
     Transform body;
-    Transform[] sparks;   // quanta: one per orbit
+    Transform[] sparks;   // quanta: one comet per orbit (the head)
+    SpriteRenderer[][] sparkTrails;   // ... and its tail, dots trailing back along the orbit
     SpriteRenderer glow, ring, indIcon, indGlow, indArrow;
     Color color;
     Sprite sprite;
@@ -85,25 +86,37 @@ public class Pickup : MonoBehaviour
         body = Make("Body", sprite, color, 16, bodyScale).transform;
         if (kind == PickupKind.Coin)
         {
-            // One spark per orbit, racing around it.
+            // One comet per orbit: a white-hot head with a glowing tail that follows the curve.
             sparks = new Transform[3];
+            sparkTrails = new SpriteRenderer[3][];
             for (int i = 0; i < sparks.Length; i++)
             {
                 var sp = new GameObject("Spark" + i).transform;
                 sp.SetParent(body, false);
                 var g = sp.gameObject.AddComponent<SpriteRenderer>();
                 g.sprite = ProcSprites.Glow;
-                g.color = new Color(1f, 0.95f, 0.75f, 0.9f);
-                g.sortingOrder = 17;
-                sp.localScale = Vector3.one * 0.32f;
-                var dot = new GameObject("Dot").transform;
+                g.color = new Color(1f, 0.92f, 0.7f, 0.95f);
+                g.sortingOrder = 18;
+                sp.localScale = Vector3.one * 0.3f;
+                var dot = new GameObject("Hot").transform;
                 dot.SetParent(sp, false);
-                dot.localScale = Vector3.one * 0.35f;
+                dot.localScale = Vector3.one * 0.3f;
                 var d = dot.gameObject.AddComponent<SpriteRenderer>();
-                d.sprite = ProcSprites.Ball;
+                d.sprite = ProcSprites.Glow;
                 d.color = Color.white;
-                d.sortingOrder = 18;
+                d.sortingOrder = 19;
                 sparks[i] = sp;
+
+                sparkTrails[i] = new SpriteRenderer[QuantaOrbit.TrailDots];
+                for (int j = 0; j < QuantaOrbit.TrailDots; j++)
+                {
+                    var tr = new GameObject("Tail" + j);
+                    tr.transform.SetParent(body, false);
+                    var r = tr.AddComponent<SpriteRenderer>();
+                    r.sprite = ProcSprites.Glow;
+                    r.sortingOrder = 17;
+                    sparkTrails[i][j] = r;
+                }
             }
         }
         if (kind == PickupKind.Orb || kind == PickupKind.Heart)
@@ -163,11 +176,10 @@ public class Pickup : MonoBehaviour
                 body.localScale = Vector3.one * bodyScale * (1f + 0.05f * Mathf.Sin(age * 4f));
                 for (int i = 0; i < sparks.Length; i++)
                 {
-                    float tilt = i * 60f * Mathf.Deg2Rad;
-                    float th = age * (3.2f + 0.5f * i) + i * 2.1f;
-                    Vector2 e = new Vector2(Mathf.Cos(th) * 0.45f, Mathf.Sin(th) * 0.15f);
-                    sparks[i].localPosition = new Vector3(e.x * Mathf.Cos(tilt) - e.y * Mathf.Sin(tilt),
-                                                          e.x * Mathf.Sin(tilt) + e.y * Mathf.Cos(tilt), 0f);
+                    float speed = 3.2f + 0.5f * i;
+                    float th = age * speed + i * 2.1f;
+                    sparks[i].localPosition = QuantaOrbit.Point(i, th, QuantaOrbit.A, QuantaOrbit.B);
+                    QuantaOrbit.LayTrail(sparkTrails[i], i, th, speed, QuantaOrbit.A, QuantaOrbit.B, 0.26f, CoinColor);
                 }
                 break;
             case PickupKind.Heart:
@@ -323,5 +335,55 @@ public class Pickup : MonoBehaviour
         indArrow.transform.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(n.y, n.x) * Mathf.Rad2Deg);
         indArrow.transform.localScale = Vector3.one * (0.18f + 0.12f * close);
         indArrow.color = new Color(color.r, color.g, color.b, 0.5f + 0.4f * close);
+    }
+}
+
+/// <summary>
+/// The quanta atom's three orbits (tilted 0, 60 and 120 degrees, like the Quanta sprite) and the
+/// comet streaks that race along them. Shared by the pickup and the upgrade screen.
+/// </summary>
+public static class QuantaOrbit
+{
+    /// <summary>Orbit half-axes in the pickup body's local units (the sprite's 0.9 / 0.3 of its half size).</summary>
+    public const float A = 0.45f, B = 0.15f;
+    public const int TrailDots = 12;
+    /// <summary>Seconds of travel the tail covers (so faster comets have longer tails).</summary>
+    public const float TrailTime = 0.2f;
+    /// <summary>The tail never wraps more than this much of the orbit (radians).</summary>
+    public const float MaxTrailAngle = 5.2f;
+
+    public static Vector2 Point(int orbit, float th, float a, float b)
+    {
+        float tilt = orbit * 60f * Mathf.Deg2Rad;
+        float ex = Mathf.Cos(th) * a, ey = Mathf.Sin(th) * b;
+        float c = Mathf.Cos(tilt), s = Mathf.Sin(tilt);
+        return new Vector2(ex * c - ey * s, ex * s + ey * c);
+    }
+
+    /// <summary>Angle the tail spans for a comet moving at 'speed' radians per second.</summary>
+    public static float TrailSpan(float speed) => Mathf.Min(MaxTrailAngle, Mathf.Abs(speed) * TrailTime + 0.25f);
+
+    /// <summary>Tail size (0..1 of the head) and opacity of tail dot j (1 = right behind the head).</summary>
+    public static void TrailShape(int j, int count, out float size, out float alpha)
+    {
+        float k = j / (float)(count + 1);
+        size = Mathf.Pow(1f - k, 0.8f);
+        alpha = Mathf.Pow(1f - k, 1.6f);
+    }
+
+    /// <summary>Places a world-space comet tail (sprites under the same parent as the head).</summary>
+    public static void LayTrail(SpriteRenderer[] dots, int orbit, float th, float speed, float a, float b, float headSize, Color color)
+    {
+        float span = TrailSpan(speed);
+        for (int j = 0; j < dots.Length; j++)
+        {
+            int n = j + 1;
+            TrailShape(n, dots.Length, out float size, out float alpha);
+            dots[j].transform.localPosition = Point(orbit, th - span * n / dots.Length, a, b);
+            dots[j].transform.localScale = Vector3.one * headSize * (0.35f + 0.65f * size);
+            Color c = Color.Lerp(Color.Lerp(color, Color.white, 0.5f), color, n / (float)dots.Length);
+            c.a = 0.85f * alpha;
+            dots[j].color = c;
+        }
     }
 }

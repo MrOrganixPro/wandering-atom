@@ -12,7 +12,7 @@ using UnityEngine.Serialization;
 /// </summary>
 public class GameManager : MonoBehaviour
 {
-    public enum State { Title, Playing, Paused, LevelComplete, Upgrade, GameOver, Dying }
+    public enum State { Title, Playing, Paused, LevelComplete, Upgrade, GameOver, Dying, Story }
 
     public static GameManager Instance { get; private set; }
 
@@ -49,10 +49,11 @@ public class GameManager : MonoBehaviour
     const string LevelKey = "Pendulum_Level";
     const string BestKey = "Pendulum_BestLevel";
     const string UpgradeKeyPrefix = "Pendulum_Upg_";
+    const string StorySeenKey = "Pendulum_StorySeen";
 
     public enum UpgradeType
     {
-        Heal, MaxHealth, Speed, Thrust, Torque, BallArmor, Challenger, Sluggish,
+        Heal, MaxHealth, Speed, Torque, Orbital, BallArmor, Challenger, Sluggish,
         BallSize, PickupRange, Repel, Booster,
         Regeneration,              // rare
         Spaceship,                 // character
@@ -133,7 +134,9 @@ public class GameManager : MonoBehaviour
 
     [Header("Upgrades")]
     public int upgradeChoices = 3;
+    [Tooltip("Speed upgrade: top speed +this fraction each.")]
     public float speedPerUpgrade = 0.2f;
+    [Tooltip("Speed upgrade: acceleration (thrust) +this fraction each.")]
     public float thrustPerUpgrade = 0.2f;
     public float torquePerUpgrade = 6f;
     [Tooltip("Each Torque upgrade also adds this much turning/braking authority (base 0.45, max 1).")]
@@ -162,19 +165,44 @@ public class GameManager : MonoBehaviour
     [Tooltip("Health Recycler: orbs recycled (with full orbitals, while hurt) per heart restored.")]
     public int orbsPerRecycledHeart = 3;
 
+    [Header("Orbitals (New Orbital upgrade: +2 electron slots each, no limit)")]
+    [Tooltip("Rope length of the innermost shell.")]
+    public float firstShellLength = 1.0f;
+    [Tooltip("Each further shell sits this much farther out.")]
+    public float shellLengthStep = 0.62f;
+    [Tooltip("Quanta per level gained for every FULL energy shell after the first.")]
+    public int coinsPerExtraShell = 1;
+    [Tooltip("Chance New Orbital is among the possible cards while the atom has one shell.")]
+    [Range(0f, 1f)] public float orbitalOfferChance = 0.8f;
+    [Tooltip("The chance is divided by (1 + this x each extra shell): bigger atoms see it less.")]
+    public float orbitalOfferFalloff = 0.45f;
+
+    [Header("Upgrade screen (each quantum flies to the center, spins up and opens)")]
+    public float upgradeFlyTime = 0.6f;
+    public float upgradeSpinTime = 1.6f;
+    [Tooltip("Round start: the player's core flies from the map to the center of the screen.")]
+    public float upgradeCoreFlyTime = 0.7f;
+    [Tooltip("A picked upgrade curls into a ball and flies into the core (scaled like the other timings).")]
+    public float upgradeAbsorbTime = 0.9f;
+    [Tooltip("Round end: the core flies back to the map.")]
+    public float upgradeCoreReturnTime = 0.6f;
+    [Tooltip("Each further quantum of the same round plays this much faster (multiplier per pick).")]
+    [Range(0.3f, 1f)] public float upgradeSpeedup = 0.72f;
+    [Tooltip("The fastest it gets (fraction of the first quantum's timing).")]
+    [Range(0.1f, 1f)] public float upgradeMinPace = 0.3f;
+
     [Header("Characters (uncommon mystery box, costs 2 coins, one per run)")]
     [FormerlySerializedAs("gameChangerUnlockLevel")] public int characterUnlockLevel = 5;
     [Tooltip("Chance the first pick after a level (with every coin collected) includes a Character box.")]
     [FormerlySerializedAs("gameChangerChance")]
     [Range(0f, 1f)] public float characterChance = 0.25f;
     public float mysteryRevealTime = 2.4f;
-    [Tooltip("Challenger: coins per level.")]
+    [Tooltip("Challenger (Hydrogen ion): fixed coins per level (shells don't add any).")]
     public int challengerCoins = 3;
     [Tooltip("Sluggish: rope lengths are multiplied by this.")]
     public float sluggishTighten = 0.78f;
-    public int sluggishExtraShellCapacity = 8;
     public int sluggishMaxBallArmor = 4;
-    [Tooltip("Sluggish: Thrust and Torque can each be upgraded at most this many times (2 = level 3). Upgrades above this are refunded as extra picks.")]
+    [Tooltip("Sluggish: Speed and Torque can each be upgraded at most this many times (2 = level 3). Upgrades above this are refunded as extra picks.")]
     public int sluggishUpgradeCap = 2;
     [Tooltip("Sluggish: orbs per level are multiplied by this.")]
     public int sluggishOrbMultiplier = 2;
@@ -214,7 +242,7 @@ public class GameManager : MonoBehaviour
     readonly List<Pickup> extras = new List<Pickup>();   // coins + hearts
 
     // Upgrades (saved).
-    int upgMaxHealth, upgSpeed, upgThrust, upgTorque, upgBallArmor;
+    int upgMaxHealth, upgSpeed, upgTorque, upgOrbitals, upgBallArmor;
     int upgBallSize, upgPickupRange, upgRepel, upgBooster, upgRegen;
     int upgFireRate, upgTurretRange;
     int upgInsight, upgCoinRecycler, upgHealthRecycler;   // rare, once per run
@@ -223,10 +251,18 @@ public class GameManager : MonoBehaviour
     readonly List<UpgradeType> offer = new List<UpgradeType>();
     Character character = Character.None;
     int appliedLayout = -1;
+    int pickNumber;          // picks made so far this round (each plays faster)
+    bool orbitalPickedThisRound;   // New Orbital can be taken at most once per round
+    bool upgradeFinishing;         // last pick made: absorbing it, then the core flies home
+    int lastPickIndex = -1;
+    UpgradeType lastPicked;
+    int lastPickVersion;     // bumped on every pick (the UI shows what was taken)
     int mysteryIndex = -1;   // index in 'offer' of the mystery-box card, or -1
 
     public int MaxHealth => startingLives + upgMaxHealth;
-    public int CoinsPerLevel => character == Character.Challenger ? challengerCoins : coinsPerLevel;
+    /// <summary>Base quanta, +1 for every FULL shell after the first; the Hydrogen ion always gets its fixed amount.</summary>
+    public int CoinsPerLevel => character == Character.Challenger ? challengerCoins
+        : coinsPerLevel + Mathf.Max(0, FullShellsFor(upgOrbitals) - 1) * coinsPerExtraShell;
     int BallArmorCap => character == Character.Sluggish ? sluggishMaxBallArmor : maxBallArmorUpgrades;
     /// <summary>Ball Armor purchases banked so far (one per N levels reached) that haven't been spent.</summary>
     int BallArmorBanked => Mathf.Min(BallArmorCap, level / Mathf.Max(1, levelsPerBallArmor)) - upgBallArmor;
@@ -250,15 +286,57 @@ public class GameManager : MonoBehaviour
     public static UpgradeType CharacterCard(Character c) =>
         c == Character.Challenger ? UpgradeType.Challenger
         : c == Character.Sluggish ? UpgradeType.Sluggish : UpgradeType.Spaceship;
-    /// <summary>Most Thrust / Torque upgrades allowed (only limited by The Sluggish).</summary>
-    int ThrustTorqueCap => character == Character.Sluggish ? Mathf.Max(0, sluggishUpgradeCap) : int.MaxValue;
-    /// <summary>Thrust + Torque upgrades above the Sluggish cap (refunded as extra picks when it is taken).</summary>
+    /// <summary>Most Speed / Torque upgrades allowed (only limited by Argon).</summary>
+    int SpeedTorqueCap => character == Character.Sluggish ? Mathf.Max(0, sluggishUpgradeCap) : int.MaxValue;
+
+    // ------------------------------------------------------------- orbitals
+
+    /// <summary>Electron slots per shell for this many New Orbitals (start: 2, each orbital +2).</summary>
+    public static int[] ShellLayoutFor(int orbitals)
+    {
+        var caps = new List<int>();
+        int slots = 2 + 2 * Mathf.Max(0, orbitals);
+        for (int s = 0; slots > 0; s++)
+        {
+            int c = Mathf.Min(Elements.ShellSize(s), slots);
+            caps.Add(c);
+            slots -= c;
+        }
+        return caps.ToArray();
+    }
+
+    public static int ShellsFor(int orbitals) => ShellLayoutFor(orbitals).Length;
+
+    /// <summary>Shells completely filled with slots (the first one always is).</summary>
+    public static int FullShellsFor(int orbitals)
+    {
+        int[] caps = ShellLayoutFor(orbitals);
+        int full = 0;
+        for (int s = 0; s < caps.Length; s++) if (caps[s] >= Elements.ShellSize(s)) full++;
+        return full;
+    }
+
+    /// <summary>Does the next New Orbital complete an energy shell (and so give more quanta)?</summary>
+    bool NextOrbitalCompletesShell => FullShellsFor(upgOrbitals + 1) > FullShellsFor(upgOrbitals);
+
+    /// <summary>Chance New Orbital is a candidate card: lower the more shells the atom has.</summary>
+    float OrbitalOfferChance =>
+        orbitalOfferChance / (1f + orbitalOfferFalloff * Mathf.Max(0, ShellsFor(upgOrbitals) - 1));
+
+    float[] ShellLengthsFor(int count)
+    {
+        var lens = new float[count];
+        for (int i = 0; i < count; i++) lens[i] = firstShellLength + i * shellLengthStep;
+        return lens;
+    }
+
+    /// <summary>Speed + Torque upgrades above the Argon cap (refunded as extra picks when it is taken).</summary>
     /// <summary>
     /// Challenger: one extra pick per level beaten (upgrades happen right after beating 'level'),
     /// plus one per ball upgrade bought (they are all taken away).
     /// </summary>
-    int ChallengerRefunds => Mathf.Max(0, level) + upgBallArmor + upgBallSize;
-    int SluggishRefunds =>Mathf.Max(0, upgThrust - sluggishUpgradeCap) + Mathf.Max(0, upgTorque - sluggishUpgradeCap);
+    int ChallengerRefunds => Mathf.Max(0, level) + upgBallArmor + upgBallSize + upgOrbitals;
+    int SluggishRefunds => Mathf.Max(0, upgSpeed - sluggishUpgradeCap) + Mathf.Max(0, upgTorque - sluggishUpgradeCap);
 
     // ------------------------------------------------------- read-only state for the UI
 
@@ -290,6 +368,27 @@ public class GameManager : MonoBehaviour
     public int CoinChoices => choiceTotal;
     public int RefundTotal => refundTotal;
     public int NextLevelStars => StarsForLevel(level + 1);
+
+    // Upgrade screen timing: each quantum of a round plays faster than the one before.
+    /// <summary>1 for the first quantum of a round, then faster (smaller) for each further one.</summary>
+    public float PickPace => Mathf.Max(upgradeMinPace, Mathf.Pow(upgradeSpeedup, pickNumber));
+    public float PickFlyTime => upgradeFlyTime * PickPace;
+    public int PickNumber => pickNumber;
+    /// <summary>Picked upgrade flying into the core (after every pick, scaled by the pace).</summary>
+    public float AbsorbTime => upgradeAbsorbTime * PickPace;
+    public float CoreFlyTime => upgradeCoreFlyTime;
+    public float CoreReturnTime => upgradeCoreReturnTime;
+    /// <summary>State time at which the quantum starts flying in: after the core arrives (first pick) or after the last pick was absorbed.</summary>
+    public float PickStartTime => pickNumber == 0 ? upgradeCoreFlyTime : AbsorbTime;
+    /// <summary>The last pick of the round was made: it is being absorbed, then the core flies back to the map.</summary>
+    public bool UpgradeFinishing => upgradeFinishing;
+    public int LastPickIndex => lastPickIndex;
+    /// <summary>State time at which the atom opens and its upgrades can be picked.</summary>
+    public float OfferOpenTime => PickStartTime + (upgradeFlyTime + upgradeSpinTime) * PickPace;
+    /// <summary>State time at which a Character box (if any) bursts open.</summary>
+    public float MysteryOpenTime => OfferOpenTime + Mathf.Max(0.5f, mysteryRevealTime) * PickPace;
+    public UpgradeType LastPicked => lastPicked;
+    public int LastPickVersion => lastPickVersion;
 
     PendulumController pendulum;
     EnemySpawner spawner;
@@ -344,13 +443,43 @@ public class GameManager : MonoBehaviour
 
         BuildBackground();
         Sfx.Init(gameObject);
-        music = Music.Create(transform);
         if (GetComponent<GameUI>() == null) gameObject.AddComponent<GameUI>();
         ClearOldSave();
         bestLevel = Mathf.Max(1, PlayerPrefs.GetInt(BestKey, 1));
         ResetUpgrades();
         lives = MaxHealth;
+
+        // The very first launch opens on the story, in silence; the music begins once it ends.
+        if (PlayerPrefs.GetInt(StorySeenKey, 0) == 0) SetState(State.Story);
+        else
+        {
+            SetState(State.Title);
+            StartMusic();
+        }
+    }
+
+    void StartMusic()
+    {
+        if (music == null) music = Music.Create(transform);
+    }
+
+    // ---------------------------------------------------------------- story
+
+    /// <summary>Replay the story from the title screen (the music fades out while it plays).</summary>
+    public void PlayStory()
+    {
+        if (state != State.Title || OverlayOpen) return;
+        SetState(State.Story);
+    }
+
+    /// <summary>Called by GameUI when the story ends or is skipped: on to the title, music on.</summary>
+    public void EndStory()
+    {
+        if (state != State.Story) return;
+        PlayerPrefs.SetInt(StorySeenKey, 1);
+        PlayerPrefs.Save();
         SetState(State.Title);
+        StartMusic();
     }
 
     // ------------------------------------------------------------- upgrades
@@ -377,7 +506,7 @@ public class GameManager : MonoBehaviour
     void ResetUpgrades()
     {
         lastPickWasExtra = false;
-        upgMaxHealth = upgSpeed = upgThrust = upgTorque = upgBallArmor = 0;
+        upgMaxHealth = upgSpeed = upgTorque = upgOrbitals = upgBallArmor = 0;
         upgBallSize = upgPickupRange = upgRepel = upgBooster = upgRegen = 0;
         upgFireRate = upgTurretRange = 0;
         upgInsight = upgCoinRecycler = upgHealthRecycler = 0;
@@ -390,12 +519,13 @@ public class GameManager : MonoBehaviour
     {
         if (pendulum == null) return;
 
-        // Characters reshape the orbitals.
-        if (appliedLayout != (int)character)
+        // New Orbitals grow the shells; Characters reshape them.
+        int layoutKey = (int)character + 16 * upgOrbitals;
+        if (appliedLayout != layoutKey)
         {
-            appliedLayout = (int)character;
-            int[] caps = pendulum.BaseShellCapacities;
-            float[] lens = pendulum.BaseShellLengths;
+            appliedLayout = layoutKey;
+            int[] caps = ShellLayoutFor(upgOrbitals);
+            float[] lens = ShellLengthsFor(caps.Length);
             // Spaceship: the inner orbital's slots become turrets (its balls convert first).
             pendulum.SetTurretSlots(character == Character.Spaceship && caps.Length > 0 ? caps[0] : 0);
             if (character == Character.Spaceship && caps.Length > 0)
@@ -413,18 +543,9 @@ public class GameManager : MonoBehaviour
             }
             else if (character == Character.Sluggish)
             {
-                int n = caps.Length;
-                var newCaps = new int[n + 1];
-                var newLens = new float[n + 1];
-                for (int i = 0; i < n; i++)
-                {
-                    newCaps[i] = caps[i];
-                    newLens[i] = lens[i] * sluggishTighten;                 // tighter orbitals
-                }
-                newCaps[n] = sluggishExtraShellCapacity;                    // one more orbital
-                newLens[n] = n >= 2 ? newLens[n - 1] + (newLens[n - 1] - newLens[n - 2])
-                                    : (n == 1 ? newLens[0] + 0.8f : 1f);
-                pendulum.SetShellLayout(newCaps, newLens);
+                var newLens = new float[lens.Length];
+                for (int i = 0; i < lens.Length; i++) newLens[i] = lens[i] * sluggishTighten;   // tighter orbitals
+                pendulum.SetShellLayout(caps, newLens);
             }
             else
             {
@@ -432,11 +553,11 @@ public class GameManager : MonoBehaviour
             }
         }
 
-        int thrust = Mathf.Min(upgThrust, ThrustTorqueCap);   // capped by The Sluggish
-        int torque = Mathf.Min(upgTorque, ThrustTorqueCap);
+        int speed = Mathf.Min(upgSpeed, SpeedTorqueCap);   // capped by Argon
+        int torque = Mathf.Min(upgTorque, SpeedTorqueCap);
         pendulum.ApplyUpgrades(
-            1f + upgSpeed * speedPerUpgrade,
-            1f + thrust * thrustPerUpgrade,
+            1f + speed * speedPerUpgrade,
+            1f + speed * thrustPerUpgrade,
             torque * torquePerUpgrade,
             torque * turnAuthorityPerTorque,
             character == Character.Challenger ? 0 : upgBallArmor);
@@ -456,6 +577,9 @@ public class GameManager : MonoBehaviour
         choiceTotal = levelCoins;
         refundTotal = 0;
         choiceIndex = 0;
+        pickNumber = 0;
+        orbitalPickedThisRound = false;
+        upgradeFinishing = false;
         levelCoins = 0;
         RollOffer();
         Time.timeScale = 0f;
@@ -464,11 +588,11 @@ public class GameManager : MonoBehaviour
 
     /// <summary>
     /// Normal upgrades come in two groups (not shown differently on the cards):
-    /// Essentials (repair, max health, top speed, thrust, torque) and Extras (everything else).
+    /// Essentials (repair, max health, speed, torque, new orbital) and Extras (everything else).
     /// </summary>
     public static bool IsEssential(UpgradeType u) =>
         u == UpgradeType.Heal || u == UpgradeType.MaxHealth || u == UpgradeType.Speed
-        || u == UpgradeType.Thrust || u == UpgradeType.Torque;
+        || u == UpgradeType.Torque || u == UpgradeType.Orbital;
     public static bool IsExtra(UpgradeType u) => TierOf(u) == UpgradeTier.Normal && !IsEssential(u);
 
     bool lastPickWasExtra;   // the next offer then holds at most one Extra
@@ -478,9 +602,12 @@ public class GameManager : MonoBehaviour
         offerVersion++;
 
         // Essentials.
-        var essentials = new List<UpgradeType> { UpgradeType.MaxHealth, UpgradeType.Speed };
-        if (upgThrust < ThrustTorqueCap) essentials.Add(UpgradeType.Thrust);   // capped by The Sluggish
-        if (upgTorque < ThrustTorqueCap) essentials.Add(UpgradeType.Torque);
+        var essentials = new List<UpgradeType> { UpgradeType.MaxHealth };
+        if (upgSpeed < SpeedTorqueCap) essentials.Add(UpgradeType.Speed);     // capped by Argon
+        if (upgTorque < SpeedTorqueCap) essentials.Add(UpgradeType.Torque);
+        // New Orbital: never for the ion (it holds no electrons), once per round, rarer as the atom grows.
+        if (character != Character.Challenger && !orbitalPickedThisRound && Random.value < OrbitalOfferChance)
+            essentials.Add(UpgradeType.Orbital);
         if (lives <= MaxHealth - 2) essentials.Add(UpgradeType.Heal);   // only when down at least two hearts
 
         // Extras.
@@ -584,8 +711,8 @@ public class GameManager : MonoBehaviour
     /// <summary>Picks card 'index' of the current offer (ignored while it can't be picked yet).</summary>
     public void ChooseUpgrade(int index)
     {
-        if (state != State.Upgrade || index < 0 || index >= offer.Count || stateTime < 0.35f) return;
-        if (index == mysteryIndex && stateTime < mysteryRevealTime) return;   // still sealed
+        if (state != State.Upgrade || upgradeFinishing || index < 0 || index >= offer.Count || stateTime < OfferOpenTime + 0.15f) return;
+        if (index == mysteryIndex && stateTime < MysteryOpenTime) return;   // still sealed
 
         UpgradeType picked = offer[index];
         int cost = IsCharacter(picked) ? 2 : 1;
@@ -595,8 +722,8 @@ public class GameManager : MonoBehaviour
             case UpgradeType.Heal: lives = MaxHealth; break;
             case UpgradeType.MaxHealth: upgMaxHealth++; lives++; break;
             case UpgradeType.Speed: upgSpeed++; break;
-            case UpgradeType.Thrust: upgThrust++; break;
             case UpgradeType.Torque: upgTorque++; break;
+            case UpgradeType.Orbital: upgOrbitals++; orbitalPickedThisRound = true; break;
             case UpgradeType.BallArmor: upgBallArmor = Mathf.Min(BallArmorCap, upgBallArmor + 1); break;
             case UpgradeType.BallSize: upgBallSize = Mathf.Min(maxBallSizeUpgrades, upgBallSize + 1); break;
             case UpgradeType.PickupRange: upgPickupRange = Mathf.Min(maxPickupRangeUpgrades, upgPickupRange + 1); break;
@@ -611,22 +738,23 @@ public class GameManager : MonoBehaviour
             case UpgradeType.Spaceship: character = Character.Spaceship; break;
             case UpgradeType.Challenger:
             {
-                // One pick per level beaten so far, plus every ball upgrade, which is lost.
+                // One pick per level beaten so far, plus every ball / orbital upgrade, which is lost.
                 int refunds = ChallengerRefunds;
                 character = Character.Challenger;
                 upgBallArmor = 0;
                 upgBallSize = 0;
+                upgOrbitals = 0;
                 pendingChoices += refunds;
                 refundTotal += refunds;
                 break;
             }
             case UpgradeType.Sluggish:
             {
-                // Thrust & Torque are capped; every level above the cap is refunded as an extra pick.
+                // Speed & Torque are capped; every level above the cap is refunded as an extra pick.
                 int refunds = SluggishRefunds;
                 character = Character.Sluggish;
-                upgThrust = Mathf.Min(upgThrust, ThrustTorqueCap);
-                upgTorque = Mathf.Min(upgTorque, ThrustTorqueCap);
+                upgSpeed = Mathf.Min(upgSpeed, SpeedTorqueCap);
+                upgTorque = Mathf.Min(upgTorque, SpeedTorqueCap);
                 pendingChoices += refunds;
                 refundTotal += refunds;
                 break;
@@ -634,19 +762,16 @@ public class GameManager : MonoBehaviour
         }
         ApplyUpgrades();
         Sfx.Play(IsCharacter(picked) ? "level" : "orb");
+        lastPicked = picked;
+        lastPickIndex = index;
+        lastPickVersion++;
 
         pendingChoices -= cost;
         choiceIndex += cost;
-        if (pendingChoices > 0)
-        {
-            RollOffer();
-            SetState(State.Upgrade);   // resets the click guard timer
-        }
-        else
-        {
-            Time.timeScale = 1f;
-            StartLevel(level + 1, false);
-        }
+        pickNumber++;
+        if (pendingChoices <= 0) upgradeFinishing = true;   // absorb it, fly home, then the next level
+        else RollOffer();
+        SetState(State.Upgrade);   // restarts the timeline for the next quantum (or the finish)
     }
 
     public static string UpgradeTitle(UpgradeType u)
@@ -655,9 +780,9 @@ public class GameManager : MonoBehaviour
         {
             case UpgradeType.Heal: return Loc.T("FULL STABILITY", "TAM KARARLILIK");
             case UpgradeType.MaxHealth: return Loc.T("MAX STABILITY", "MAKS. KARARLILIK");
-            case UpgradeType.Speed: return Loc.T("TOP SPEED", "AZAMİ HIZ");
-            case UpgradeType.Thrust: return Loc.T("THRUST", "İTKİ");
+            case UpgradeType.Speed: return Loc.T("SPEED", "HIZ");
             case UpgradeType.Torque: return Loc.T("TORQUE", "TORK");
+            case UpgradeType.Orbital: return Loc.T("NEW ORBITAL", "YENİ ORBİTAL");
             case UpgradeType.Challenger: return Loc.T("HYDROGEN ION", "HİDROJEN İYONU");
             case UpgradeType.Sluggish: return Loc.T("ARGON", "ARGON");
             case UpgradeType.Spaceship: return Loc.T("RADIUM", "RADYUM");
@@ -676,8 +801,8 @@ public class GameManager : MonoBehaviour
     }
 
     string ArgonText(int refunds) =>
-        Loc.T("Third shell: 18 electrons\n2\u00d7 electrons per level\nThrust & Torque max " + (sluggishUpgradeCap + 1),
-              "3. kabuk: 18 elektron\nSeviyede 2\u00d7 elektron\nİtki ve Tork en fazla " + (sluggishUpgradeCap + 1))
+        Loc.T("Tighter orbitals\n2\u00d7 electrons per level\nSpeed & Torque max " + (sluggishUpgradeCap + 1),
+              "Daha sıkı yörüngeler\nSeviyede 2\u00d7 elektron\nHız ve Tork en fazla " + (sluggishUpgradeCap + 1))
         + (refunds > 0 ? Loc.T("\n+" + refunds + " picks now", "\nŞimdi +" + refunds + " seçim") : "");
 
     string HydrogenText(string last) =>
@@ -691,8 +816,13 @@ public class GameManager : MonoBehaviour
         {
             case UpgradeType.Heal: return Loc.T("Stability ", "Kararlılık ") + lives + " \u2192 " + MaxHealth;
             case UpgradeType.MaxHealth: return Loc.T("+1 stability", "+1 kararlılık");
-            case UpgradeType.Speed: return Loc.Pct(speedPerUpgrade) + Loc.T(" top speed", " azami hız");
-            case UpgradeType.Thrust: return Loc.Pct(thrustPerUpgrade) + Loc.T(" acceleration", " ivme");
+            case UpgradeType.Speed:
+                return Loc.Pct(speedPerUpgrade) + Loc.T(" top speed\n", " azami hız\n")
+                     + Loc.Pct(thrustPerUpgrade) + Loc.T(" acceleration", " ivme");
+            case UpgradeType.Orbital:
+                return Loc.T("+2 electron slots", "+2 elektron yeri")
+                     + (NextOrbitalCompletesShell ? Loc.T("\nFills the shell: +" + coinsPerExtraShell + "\nquanta per level",
+                                                          "\nKabuğu doldurur: seviye\nbaşına +" + coinsPerExtraShell + " kuanta") : "");
             case UpgradeType.Torque: return Loc.T("Sharper turns\nand braking", "Daha keskin dönüş\nve fren");
             case UpgradeType.Challenger:
                 return HydrogenText(Loc.T("+" + ChallengerRefunds + " picks now", "Şimdi +" + ChallengerRefunds + " seçim"));
@@ -730,6 +860,9 @@ public class GameManager : MonoBehaviour
         switch (u)
         {
             case UpgradeType.Heal: return Loc.T("Fully restore\nyour stability", "Kararlılığını\ntamamen yeniler");
+            case UpgradeType.Orbital:
+                return Loc.T("+2 electron slots\nEach full shell: +" + coinsPerExtraShell + " quanta per level",
+                             "+2 elektron yeri\nHer dolu kabuk: seviye başına +" + coinsPerExtraShell + " kuanta");
             case UpgradeType.Repel: return Loc.T("Getting hit blasts\nenemies & dust away", "Hasar alınca düşmanları\nve tozu iter");
             case UpgradeType.Booster: return Loc.T("Getting hit gives\na burst of speed", "Hasar alınca\nani hız kazan");
             case UpgradeType.Challenger: return HydrogenText(Loc.T("Earlier picks refunded", "Önceki seçimler iade edilir"));
@@ -745,8 +878,8 @@ public class GameManager : MonoBehaviour
         {
             case UpgradeType.MaxHealth: return upgMaxHealth;
             case UpgradeType.Speed: return upgSpeed;
-            case UpgradeType.Thrust: return upgThrust;
             case UpgradeType.Torque: return upgTorque;
+            case UpgradeType.Orbital: return character == Character.Challenger ? 0 : upgOrbitals;
             case UpgradeType.BallArmor: return character == Character.Challenger ? 0 : upgBallArmor;
             case UpgradeType.BallSize: return character == Character.Challenger ? 0 : upgBallSize;
             case UpgradeType.PickupRange: return upgPickupRange;
@@ -772,13 +905,23 @@ public class GameManager : MonoBehaviour
     public bool UpgradeLevels(UpgradeType u, out int owned, out int cap)
     {
         owned = OwnedCount(u);
-        int tt = ThrustTorqueCap == int.MaxValue ? -1 : ThrustTorqueCap;
+        int tt = SpeedTorqueCap == int.MaxValue ? -1 : SpeedTorqueCap;
         switch (u)
         {
-            case UpgradeType.MaxHealth:
-            case UpgradeType.Speed: cap = -1; return true;
-            case UpgradeType.Thrust:
+            case UpgradeType.MaxHealth: cap = -1; return true;
+            case UpgradeType.Speed:
             case UpgradeType.Torque: cap = tt; return true;
+            case UpgradeType.Orbital:
+            {
+                // Pips = the orbitals of the shell the next one goes into (filled = already open).
+                int[] caps = ShellLayoutFor(upgOrbitals);
+                int s = caps.Length - 1;
+                int full = Elements.ShellSize(s);
+                if (caps[s] >= full) { s++; full = Elements.ShellSize(s); owned = 0; }
+                else owned = caps[s] / 2;
+                cap = full / 2;
+                return true;
+            }
             case UpgradeType.BallArmor: cap = BallArmorCap; return true;
             case UpgradeType.BallSize: cap = maxBallSizeUpgrades; return true;
             case UpgradeType.PickupRange: cap = maxPickupRangeUpgrades; return true;
@@ -797,7 +940,7 @@ public class GameManager : MonoBehaviour
             case UpgradeType.Heal:
             case UpgradeType.MaxHealth: return Pickup.HeartColor;
             case UpgradeType.Speed: return new Color(0.5f, 1f, 0.6f);
-            case UpgradeType.Thrust: return new Color(1f, 0.6f, 0.25f);
+            case UpgradeType.Orbital: return new Color(0.4f, 0.85f, 1f);
             case UpgradeType.Torque: return new Color(0.75f, 0.6f, 1f);
             case UpgradeType.Challenger: return new Color(1f, 0.3f, 0.3f);
             case UpgradeType.Sluggish: return new Color(0.45f, 0.75f, 1f);
@@ -1189,11 +1332,13 @@ public class GameManager : MonoBehaviour
                 if (PausePressed()) SetPaused(true);
                 break;
             case State.Upgrade:
-                if (kb != null)
+                // Picks are made by clicking a petal (GameUI). After the last one, wait for the
+                // core to absorb it and fly back to the map.
+                if (upgradeFinishing && stateTime >= AbsorbTime + upgradeCoreReturnTime)
                 {
-                    if (kb.digit1Key.wasPressedThisFrame || kb.numpad1Key.wasPressedThisFrame) ChooseUpgrade(0);
-                    else if (kb.digit2Key.wasPressedThisFrame || kb.numpad2Key.wasPressedThisFrame) ChooseUpgrade(1);
-                    else if (kb.digit3Key.wasPressedThisFrame || kb.numpad3Key.wasPressedThisFrame) ChooseUpgrade(2);
+                    upgradeFinishing = false;
+                    Time.timeScale = 1f;
+                    StartLevel(level + 1, false);
                 }
                 break;
             case State.Paused:
@@ -1227,7 +1372,7 @@ public class GameManager : MonoBehaviour
 
         if (music != null)
         {
-            music.volume = musicVolume;
+            music.volume = state == State.Story ? 0f : musicVolume;
             music.muffled = state == State.Paused;
         }
 
