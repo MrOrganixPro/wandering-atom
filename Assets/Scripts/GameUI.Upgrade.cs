@@ -34,6 +34,8 @@ public partial class GameUI
         public Color color;
         public bool mystery, rare;
         public float wobble;              // locked petal was clicked: shake
+        public float unlockAge = -1f;     // a neutrino is opening it (seconds), -1 = no
+        public VisualElement lockContent; // the lock, kept on show until it shatters
     }
 
     readonly Petal[] petals = new Petal[6];
@@ -120,8 +122,9 @@ public partial class GameUI
             int k = PetalAt(ev.localPosition);
             if (k < 0) return;
             Petal p = petals[k];
+            if (p.unlockAge >= 0f) return;                 // a neutrino is still opening it
             if (p.offer >= 0) gm.ChooseUpgrade(p.offer);   // GameManager ignores it while sealed
-            else
+            else if (!TryUnlockPetal(p))
             {
                 p.wobble = 1f;
                 Sfx.Play("full", 0.5f);
@@ -148,6 +151,7 @@ public partial class GameUI
         HideAbsorb();
 
         BuildHoverPanel();
+        BuildNeutrinoCounter();
     }
 
     /// <summary>Square element of half size 'half', centered on the atom's resting center.</summary>
@@ -207,6 +211,7 @@ public partial class GameUI
     void RebuildAtom()
     {
         builtOffer = gm.OfferVersion;
+        ClearUnlocks();
         spinSoundDone = openDone = mysteryOpenDone = false;
         hoverPetal = -1;
         for (int i = 0; i < 3; i++) cometTheta[i] = Random.Range(0f, Mathf.PI * 2f);
@@ -226,13 +231,19 @@ public partial class GameUI
         foreach (var p in petals)
         {
             if (p.content != null) p.content.RemoveFromHierarchy();
-            p.mystery = p.offer >= 0 && p.offer == gm.MysteryIndex;
-            p.rare = p.offer >= 0 && !p.mystery && GameManager.IsRare(gm.Offer[p.offer]);
-            p.color = p.offer >= 0 ? GameManager.UpgradeColor(gm.Offer[p.offer]) : new Color(0.55f, 0.58f, 0.7f);
-            p.wobble = 0f;
-            BuildPetalContent(p);
+            SetupPetal(p);
         }
         atomFlash.BringToFront();
+    }
+
+    /// <summary>Colors and contents for what the petal now holds (its offer, or a lock).</summary>
+    void SetupPetal(Petal p)
+    {
+        p.mystery = p.offer >= 0 && p.offer == gm.MysteryIndex;
+        p.rare = p.offer >= 0 && !p.mystery && GameManager.IsRare(gm.Offer[p.offer]);
+        p.color = p.offer >= 0 ? GameManager.UpgradeColor(gm.Offer[p.offer]) : new Color(0.55f, 0.58f, 0.7f);
+        p.wobble = 0f;
+        BuildPetalContent(p);
     }
 
     void BuildPetalContent(Petal p)
@@ -350,12 +361,12 @@ public partial class GameUI
     string LevelLine(GameManager.UpgradeType u)
     {
         if (GameManager.IsCharacter(u)) return Loc.T("CHARACTER  ·  2 QUANTA", "KARAKTER  ·  2 KUANTA");
-        if (GameManager.IsRare(u)) return Loc.T("RARE  ·  ONCE PER RUN", "NADİR  ·  OYUN BAŞINA BİR");
+        if (GameManager.IsRare(u)) return Loc.T("RARE  ·  ONCE PER RUN", "NADİR  ·  OYUN BAŞINA 1 KEZ");
         if (u == GameManager.UpgradeType.Heal) return Loc.T("INSTANT", "ANINDA");
         int owned = gm.OwnedCount(u);
         string line = Loc.T("LEVEL ", "SEVİYE ") + owned + "  →  " + (owned + 1);
         if (u != GameManager.UpgradeType.Orbital && gm.UpgradeLevels(u, out _, out int cap) && cap > 0)
-            line += Loc.T("   (MAX ", "   (EN ÇOK ") + cap + ")";
+            line += Loc.T("   (MAX ", "   (EN FAZLA ") + cap + ")";
         return line;
     }
 
@@ -392,10 +403,24 @@ public partial class GameUI
         Border(hoverPanel, 2f, WithAlpha(p.color, 0.8f));
         if (p.offer < 0)
         {
+            bool can = gm.Neutrinos > 0;
+            Border(hoverPanel, 2f, WithAlpha(can ? Pickup.NeutrinoColor : p.color, 0.8f));
             hoverTitle.text = Loc.T("LOCKED", "KİLİTLİ");
-            hoverTitle.style.color = Dim;
+            hoverTitle.style.color = can ? Pickup.NeutrinoColor : Dim;
+            hoverLevel.text = can ? Loc.T("1 NEUTRINO", "1 NÖTRİNO") : "";
+            hoverDesc.text = can
+                ? Loc.T("Click to spend a neutrino and open this slot, for this pick only.",
+                        "Tıklarsan bir nötrino harcanır ve bu yuva yalnızca bu seçim için açılır.")
+                : Loc.T("Finish a level without losing stability to earn a neutrino, then spend it to open this slot.",
+                        "Kararlılık kaybetmeden bir seviyeyi bitirirsen nötrino kazanırsın; onunla bu yuvayı açabilirsin.");
+            return;
+        }
+        if (p.unlockAge >= 0f && p.unlockAge < UnlockShatter)
+        {
+            hoverTitle.text = "...";
+            hoverTitle.style.color = Pickup.NeutrinoColor;
             hoverLevel.text = "";
-            hoverDesc.text = Loc.T("This slot isn't available yet.", "Bu yuva henüz kullanılamıyor.");
+            hoverDesc.text = "";
             return;
         }
         if (p.mystery && gm.StateTime < gm.MysteryOpenTime)
@@ -425,6 +450,7 @@ public partial class GameUI
         // A pick was just made: launch it into the core (before the petals are rebuilt).
         if (gm.LastPickVersion != shownPickVersion)
         {
+            ClearUnlocks();
             if (shownPickVersion >= 0) StartAbsorb();
             shownPickVersion = gm.LastPickVersion;
         }
@@ -438,6 +464,8 @@ public partial class GameUI
 
         UpdateCoreView(T, dt, ut);
         UpdateAbsorb(dt);
+        UpdateUnlocks(dt);
+        UpdateNeutrinoCounter(dt);
 
         // ---- Before this quantum flies in: the core arrives, or the last atom fades away.
         if (finishing || T < start)
@@ -455,11 +483,10 @@ public partial class GameUI
         }
         atomRoot.style.opacity = 1f;
 
-        // ---- 1. Fly in from the picks row, growing around the core.
+        // ---- 1. Grow out of the core, from the center.
         float tf = T - start;
         float k = EaseOut(Mathf.Clamp01(tf / fly));
-        Vector2 from = FlyStart();
-        float startScale = 15f * 0.9f / (ProcSprites.AtomA * AtomHalf);   // the 30px quanta pip's orbit size
+        float startScale = CoreViewRadius * 0.6f / (ProcSprites.AtomA * AtomHalf);   // starts inside the core
         float scale = Mathf.Lerp(startScale, 1f, k);
 
         // ---- 2. Spin up; 3. burst open, then settle.
@@ -470,8 +497,7 @@ public partial class GameUI
         else omega = Mathf.Lerp(48f, 2.4f, EaseOut(Mathf.Clamp01((T - open) / 0.9f)));
 
         float shake = !isOpen && tf >= fly ? 4f * spin * spin : 0f;
-        atomRoot.style.translate = new Translate(from.x * (1f - k) + Random.Range(-shake, shake),
-                                                 from.y * (1f - k) + Random.Range(-shake, shake));
+        atomRoot.style.translate = new Translate(Random.Range(-shake, shake), Random.Range(-shake, shake));
         float pulse = isOpen ? 0f : 0.04f * spin * spin * Mathf.Sin(ut * 40f);
         atomRoot.style.scale = new Scale(new Vector3(scale + pulse, scale + pulse, 1f));
 
@@ -501,18 +527,6 @@ public partial class GameUI
         UpdateComets(dt, omega);
         UpdatePetals(T, open, mOpen, ut, dt);
         UpdateHoverPanel(dt);
-    }
-
-    /// <summary>Offset (px) from the atom's resting center to the spent pip in the picks row.</summary>
-    Vector2 FlyStart()
-    {
-        int spent = Mathf.Clamp(gm.ChoiceIndex >= gm.CoinChoices && gm.RefundTotal > 0
-                                ? gm.RefundTotal - (gm.ChoiceIndex - gm.CoinChoices) - 1
-                                : gm.CoinChoices - gm.ChoiceIndex - 1, 0, Mathf.Max(0, upgradePicks.items.Count - 1));
-        if (upgradePicks.items.Count == 0) return new Vector2(0f, -340f);
-        Rect pip = upgradePicks.items[spent].worldBound;
-        if (float.IsNaN(pip.width)) return new Vector2(0f, -340f);
-        return upgradeScreen.WorldToLocal(pip.center) - AtomCenter;
     }
 
     void UpdateComets(float dt, float omega)
@@ -548,7 +562,10 @@ public partial class GameUI
     /// <param name="T">State time; negative keeps every petal hidden.</param>
     void UpdatePetals(float T, float open, float mOpen, float ut, float dt)
     {
-        float reveal = T < 0f ? 0f : Mathf.Clamp01((T - open) / 0.3f);
+        // The petals flash in all at once the moment the atom bursts (no fade), then cool down.
+        float reveal = T >= 0f && T >= open ? 1f : 0f;
+        float flashIn = reveal > 0f ? Mathf.Clamp01(1f - (T - open) / 0.35f) : 0f;
+        flashIn *= flashIn;
         bool mysteryOpen = T >= mOpen;
         if (T >= 0f && mysteryOpen && !mysteryOpenDone && gm.MysteryIndex >= 0)
         {
@@ -561,19 +578,29 @@ public partial class GameUI
         foreach (var p in petals)
         {
             if (p.content == null) continue;
-            bool hover = hoverPetal == p.index && reveal >= 1f;
+            bool hover = hoverPetal == p.index && reveal >= 1f && p.unlockAge < 0f;
             p.wobble = Mathf.MoveTowards(p.wobble, 0f, dt * 3f);
+            if (reveal > 0f && UpdateUnlockingPetal(p, ut)) continue;
             Color c = p.color;
             if (p.mystery && !mysteryOpen) c = CardGold;
             if (p.rare) c = Color.Lerp(c, prism, 0.5f);
 
             float fillA = p.offer < 0 ? 0.10f : hover ? 0.42f : 0.2f;
             float edgeA = p.offer < 0 ? 0.22f : hover ? 1f : 0.65f;
-            p.fill.style.unityBackgroundImageTintColor = WithAlpha(c, fillA);
-            p.edge.style.unityBackgroundImageTintColor = WithAlpha(p.rare ? prism : c, edgeA);
+            Color edgeC = p.rare ? prism : c;
+            // A neutrino to spend: the locks glow faintly, inviting a click.
+            if (p.offer < 0 && gm.Neutrinos > 0 && PetalsLive)
+            {
+                bool lh = hoverPetal == p.index;
+                c = edgeC = Pickup.NeutrinoColor;
+                fillA = lh ? 0.24f : 0.12f;
+                edgeA = (lh ? 0.75f : 0.32f) + 0.12f * Mathf.Sin(ut * 3f + p.index);
+            }
+            p.fill.style.unityBackgroundImageTintColor = WithAlpha(Color.Lerp(c, Color.white, flashIn), Mathf.Lerp(fillA, 0.6f, flashIn));
+            p.edge.style.unityBackgroundImageTintColor = WithAlpha(Color.Lerp(edgeC, Color.white, flashIn), Mathf.Lerp(edgeA, 1f, flashIn));
             p.fill.style.opacity = p.edge.style.opacity = reveal;
 
-            float pop = reveal < 1f ? reveal * (1f + 0.35f * Mathf.Sin(reveal * Mathf.PI)) : 1f;
+            float pop = 1f + 0.22f * flashIn;
             float s = pop * (hover ? 1.08f : 1f);
             p.content.style.opacity = reveal;
             p.content.style.scale = new Scale(new Vector3(s, s, 1f));
@@ -677,6 +704,7 @@ public partial class GameUI
         pc.upgradeHidden = away;
         if (st != GameManager.State.Upgrade)
         {
+            if (unlocks.Count > 0) ClearUnlocks();
             HideAbsorb();
             absorbAge = 99f;
             shownPickVersion = gm.LastPickVersion;

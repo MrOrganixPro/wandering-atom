@@ -1,7 +1,7 @@
 using System;
 using UnityEngine;
 
-public enum PickupKind { Star, Orb, Coin, Heart }
+public enum PickupKind { Star, Orb, Coin, Heart, Neutrino }
 
 /// <summary>
 /// A collectible:
@@ -22,6 +22,8 @@ public class Pickup : MonoBehaviour
     public static readonly Color OrbColor = new Color(0.3f, 0.9f, 1f);
     public static readonly Color CoinColor = new Color(1f, 0.66f, 0.22f);
     public static readonly Color HeartColor = new Color(1f, 0.35f, 0.5f);
+    /// <summary>Neutrino: a pale, barely-there white.</summary>
+    public static readonly Color NeutrinoColor = new Color(0.9f, 0.95f, 1f);
 
     public PickupKind Kind { get; private set; }
     public float radius = 0.35f;
@@ -50,6 +52,7 @@ public class Pickup : MonoBehaviour
             case PickupKind.Star: return Gold;
             case PickupKind.Coin: return CoinColor;
             case PickupKind.Heart: return HeartColor;
+            case PickupKind.Neutrino: return NeutrinoColor;
             default: return OrbColor;
         }
     }
@@ -61,6 +64,7 @@ public class Pickup : MonoBehaviour
             case PickupKind.Star: return ProcSprites.Photon;
             case PickupKind.Coin: return ProcSprites.Quanta;
             case PickupKind.Heart: return ProcSprites.Stability;
+            case PickupKind.Neutrino: return ProcSprites.Neutrino;
             default: return ProcSprites.Electron;
         }
     }
@@ -78,6 +82,11 @@ public class Pickup : MonoBehaviour
             case PickupKind.Star: radius = 0.35f; bodyScale = 2.3f; indicatorMax = 0.85f; break;
             case PickupKind.Coin: radius = 0.28f; bodyScale = 2.6f; indicatorMax = 0.55f; break;
             case PickupKind.Heart: radius = 0.28f; bodyScale = 2.3f; indicatorMax = 0.55f; break;
+            case PickupKind.Neutrino:
+                radius = 0.3f; bodyScale = 3.2f; indicatorMax = 0.55f;
+                float a = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
+                wander = new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * NeutrinoDrift;
+                break;
             default: radius = 0.28f; bodyScale = 2.1f; indicatorMax = 0.55f; break;
         }
         bodyScale *= radius;
@@ -127,6 +136,59 @@ public class Pickup : MonoBehaviour
         indArrow = Make("IndicatorArrow", ProcSprites.Arrow, Color.clear, 46, 0.3f);
     }
 
+    // Neutrino pickup: drifts slowly around the area, passing through everything.
+    const float NeutrinoDrift = 0.6f;
+    Vector2 wander;
+
+    void Wander(float dt)
+    {
+        Vector2 pos = transform.position;
+        // Turn gently; steer back toward the play area if it strays too far.
+        wander = (Vector2)(Quaternion.Euler(0f, 0f, Mathf.Sin(age * 0.7f) * 25f * dt) * wander);
+        Vector2 home = GameManager.ViewCenter - pos;
+        float limit = GameManager.HalfExtents.magnitude * 0.6f;
+        if (home.magnitude > limit) wander = Vector2.Lerp(wander, home.normalized * NeutrinoDrift, dt * 0.8f);
+        wander = wander.normalized * NeutrinoDrift;
+        transform.position = pos + wander * dt;
+        // Barely there: an uneven flicker.
+        float f = 0.65f + 0.35f * Mathf.PerlinNoise(age * 2.4f, 3.7f);
+        if (body != null)
+        {
+            var sr = body.GetComponent<SpriteRenderer>();
+            if (sr != null) sr.color = new Color(color.r, color.g, color.b, f);
+        }
+    }
+
+    // A quantum just unlocked by filling an energy level: rings pulse out of it for a while.
+    SpriteRenderer[] newRings;
+    float newTime = -1f;
+    const float NewShowTime = 8f;
+
+    /// <summary>Marks this quantum as newly unlocked: it sends out pulsing rings for a few seconds.</summary>
+    public void MarkNew()
+    {
+        newTime = 0f;
+        newRings = new SpriteRenderer[2];
+        for (int i = 0; i < newRings.Length; i++)
+            newRings[i] = Make("NewRing" + i, ProcSprites.Ring, Color.clear, 14, radius * 3f);
+        GameUI.FloatText((Vector2)transform.position + Vector2.up * 0.9f, Loc.T("NEW", "YENİ"), color, 22f);
+    }
+
+    void UpdateNewRings(float dt)
+    {
+        if (newRings == null) return;
+        bool on = !collected && !popping && newTime < NewShowTime;
+        if (on) newTime += dt;
+        float fade = Mathf.Clamp01((NewShowTime - newTime) / 1.5f);
+        for (int i = 0; i < newRings.Length; i++)
+        {
+            float k = Mathf.Repeat(newTime * 0.7f + i * 0.5f, 1f);
+            newRings[i].transform.localScale = Vector3.one * radius * Mathf.Lerp(2.5f, 9f, k);
+            newRings[i].color = on ? new Color(color.r, color.g, color.b, 0.85f * (1f - k) * (1f - k) * fade) : Color.clear;
+        }
+        if (!on && (collected || popping)) newRings = null;
+    }
+
     SpriteRenderer Make(string name, Sprite s, Color c, int order, float scale)
     {
         var go = new GameObject(name);
@@ -154,6 +216,7 @@ public class Pickup : MonoBehaviour
 
     void Update()
     {
+        UpdateNewRings(Time.deltaTime);
         if (popping)
         {
             UpdatePop(Time.deltaTime);
@@ -162,7 +225,8 @@ public class Pickup : MonoBehaviour
         if (collected) return;
         float dt = Time.deltaTime;
         age += dt;
-        KeepClearOfHazards();
+        if (Kind == PickupKind.Neutrino) Wander(dt);   // drifts, and phases straight through hazards
+        else KeepClearOfHazards();
 
         switch (Kind)
         {

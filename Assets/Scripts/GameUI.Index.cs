@@ -13,12 +13,23 @@ public partial class GameUI
 {
     enum Demo { None, Shard, Brute, Missile, Flash, Broken, Asteroid, Well }
 
+    /// <summary>
+    /// How a threat takes electrons. Ionizing: each hit wears down an electron's binding (the
+    /// Electron Binding upgrade adds hits); with none left it is knocked out, and the atom is
+    /// ionized. Destructive: binding doesn't matter, any electron it reaches is gone.
+    /// </summary>
+    enum Attack { None, Ionizing, Destructive }
+
+    static readonly Color IonizingColor = new Color(0.5f, 0.82f, 1f);
+    static readonly Color DestructiveColor = new Color(1f, 0.3f, 0.32f);
+
     class Entry
     {
         public string id, name, desc, tag;
         public Sprite sprite;
         public Color color;
         public Demo demo;
+        public Attack attack;
         public bool Seen => Codex.Seen(id);
     }
 
@@ -27,7 +38,15 @@ public partial class GameUI
     static readonly Color PodColor = new Color(0.9f, 0.82f, 0.62f);
 
     VisualElement indexScreen, indexGrid, detailIconHolder, previewBox;
-    Label detailName, detailTag, detailDesc;
+    Label detailName, detailTag, detailDesc, detailAttack, detailAttackNote;
+    VisualElement detailAttackRow;
+
+    // Hovering the attack badge: a small panel explaining that kind of attack.
+    VisualElement attackTip;
+    Label attackTipTitle, attackTipBody, attackTipHint;
+    Attack shownAttack;
+    bool attackTipHover;
+    float attackTipFade;
     VisualElement[] tabs = new VisualElement[2];
     Label[] tabCounts = new Label[2];
     readonly List<VisualElement> tiles = new List<VisualElement>();
@@ -78,34 +97,34 @@ public partial class GameUI
         Color flash = sp != null ? sp.flashColor : new Color(1f, 0.95f, 0.3f);
         Color broken = sp != null ? sp.brokenColor : new Color(0.7f, 0.55f, 1f);
 
-        list.Add(new Entry { id = Codex.Enemy(EnemyType.Shard), sprite = ProcSprites.Shard, color = shard, demo = Demo.Shard,
+        list.Add(new Entry { id = Codex.Enemy(EnemyType.Shard), sprite = ProcSprites.Shard, color = shard, demo = Demo.Shard, attack = Attack.Ionizing,
             name = Loc.T("FREE RADICAL", "SERBEST RADİKAL"),
             desc = Loc.T("A reactive fragment with one unpaired electron. Flies straight at you, sometimes in cosmic ray showers. It bonds with the first electron it touches and carries it off.",
-                         "Eşleşmemiş tek elektronlu, tepkin bir parça. Sana dümdüz uçar, bazen kozmik ışın sağanağıyla gelir. Dokunduğu ilk elektronla bağ kurup onu alıp götürür.") });
-        list.Add(new Entry { id = Codex.Enemy(EnemyType.Brute), sprite = ProcSprites.Alpha, color = brute, demo = Demo.Brute,
+                         "Eşleşmemiş tek bir elektron taşıyan, tepkimeye hazır bir parça. Doğruca üstüne uçar; bazen kozmik ışın sağanaklarıyla birlikte gelir. Dokunduğu ilk elektronla bağ kurar ve onu alıp götürür.") });
+        list.Add(new Entry { id = Codex.Enemy(EnemyType.Brute), sprite = ProcSprites.Alpha, color = brute, demo = Demo.Brute, attack = Attack.Ionizing,
             name = Loc.T("ALPHA PARTICLE", "ALFA PARÇACIĞI"),
-            desc = Loc.T("Two protons, two neutrons: heavy and slow, and it shoves you twice as hard. It snatches an electron and keeps coming; with a second one it becomes helium and leaves.",
-                         "İki proton, iki nötron: ağır ve yavaş, seni iki kat sert iter. Bir elektron kapar ve gelmeye devam eder; ikincisini de alınca helyuma dönüşüp gider.") });
-        list.Add(new Entry { id = Codex.Enemy(EnemyType.Missile), sprite = ProcSprites.Positron, color = missile, demo = Demo.Missile,
+            desc = Loc.T("Two protons, two neutrons: heavy and slow, and it shoves you twice as hard. It grows bigger every level. It snatches an electron and keeps coming; with a second one it becomes helium and leaves.",
+                         "İki proton ve iki nötrondan oluşur. Ağır ve yavaştır ama seni iki kat sert iter. Her seviyede biraz daha büyür. Bir elektron kapsa da üstüne gelmeyi sürdürür; ikincisini de kaptığında helyuma dönüşüp uzaklaşır.") });
+        list.Add(new Entry { id = Codex.Enemy(EnemyType.Missile), sprite = ProcSprites.Positron, color = missile, demo = Demo.Missile, attack = Attack.Destructive,
             name = Loc.T("POSITRON", "POZİTRON"),
-            desc = Loc.T("Antimatter. Its opposite charge pulls it after you forever. When it catches an electron the two circle each other as positronium, then annihilate in a flash. A Repel blast breaks its pull.",
-                         "Antimadde. Zıt yükü onu peşinden hiç ayırmaz. Bir elektron yakalarsa ikisi pozitronyum olarak birbirinin etrafında döner, sonra bir parlamayla yok olurlar. İtme patlaması çekimini koparır.") });
-        list.Add(new Entry { id = Codex.Enemy(EnemyType.Flash), sprite = ProcSprites.Gamma, color = flash, demo = Demo.Flash,
+            desc = Loc.T("Antimatter. Its opposite charge pulls it after you, until you slip behind it. When it catches an electron, however tightly bound, the two circle each other as positronium, then annihilate in a flash. A Repel blast breaks its pull.",
+                         "Antimadde. Zıt yükü yüzünden peşine düşer; ancak arkasına geçersen seni bırakır. Bir elektron yakaladığında, bağı ne kadar sıkı olursa olsun, ikisi pozitronyum olarak birbirinin çevresinde döner, ardından bir parlamayla yok olurlar. İtme patlaması bu çekimi kırar.") });
+        list.Add(new Entry { id = Codex.Enemy(EnemyType.Flash), sprite = ProcSprites.Gamma, color = flash, demo = Demo.Flash, attack = Attack.Ionizing,
             name = Loc.T("GAMMA RAY", "GAMA IŞINI"),
             desc = Loc.T("Appears at the edge and aims. When the line locks, it strikes once at light speed, piercing up to 3 targets and knocking electrons out. Sometimes they come as a Gamma Rain. Move!",
-                         "Kenarda belirip nişan alır. Çizgi sabitlenince ışık hızında bir kez vurur; 3 hedefe kadar delip geçer ve elektronları koparır. Bazen Gama Yağmuru olarak gelirler. Kaç!") });
-        list.Add(new Entry { id = Codex.Enemy(EnemyType.Broken), sprite = ProcSprites.Isotope, color = broken, demo = Demo.Broken,
+                         "Kenarda belirir ve nişan alır. Çizgi kilitlendiğinde ışık hızında tek bir kez vurur; 3 hedefe kadar delip geçer ve elektronları koparır. Bazen Gama Yağmuru hâlinde gelirler. Kaç!") });
+        list.Add(new Entry { id = Codex.Enemy(EnemyType.Broken), sprite = ProcSprites.Isotope, color = broken, demo = Demo.Broken, attack = Attack.Ionizing,
             name = Loc.T("UNSTABLE ISOTOPE", "KARARSIZ İZOTOP"),
-            desc = Loc.T("Each decay flings it at you, weaker every time, until it turns stable and drifts. Its first hit shakes an electron loose; its second takes one with it.",
-                         "Her bozunma onu sana fırlatır, her seferinde daha zayıf; sonunda kararlı hâle gelip sürüklenir. İlk vuruşu bir elektronu koparır, ikincisi birini alıp götürür.") });
-        list.Add(new Entry { id = Codex.Hazard(HazardType.Asteroid), sprite = ProcSprites.Asteroid(0), color = RockColor, demo = Demo.Asteroid,
+            desc = Loc.T("Each decay flings it toward where you just were, weaker every time, until it turns stable and drifts. Keep moving! Its first hit shakes an electron loose; its second takes one with it.",
+                         "Her bozunmada az önce bulunduğun yere doğru fırlar, ama her seferinde biraz daha zayıf. Sonunda kararlı hâle gelir ve sürüklenip gider. Durma! İlk çarpması bir elektronunu koparır; ikincisi bir elektronu da beraberinde götürür.") });
+        list.Add(new Entry { id = Codex.Hazard(HazardType.Asteroid), sprite = ProcSprites.Asteroid(0), color = RockColor, demo = Demo.Asteroid, attack = Attack.Ionizing,
             name = Loc.T("DUST GRAIN", "TOZ TANESİ"),
             desc = Loc.T("To an atom, a mountain. Unbreakable: crushes enemies, chips your electrons and bounces you away.",
-                         "Bir atom için koca bir dağ. Kırılmaz: düşmanları ezer, elektronlarını hırpalar ve seni savurur.") });
-        list.Add(new Entry { id = Codex.Hazard(HazardType.GravityWell), sprite = ProcSprites.Ring, color = WellColor, demo = Demo.Well,
+                         "Bir atom için koca bir dağ. Kırılmaz; düşmanları ezer, elektronlarını aşındırır ve seni savurur.") });
+        list.Add(new Entry { id = Codex.Hazard(HazardType.GravityWell), sprite = ProcSprites.Ring, color = WellColor, demo = Demo.Well, attack = Attack.Destructive,
             name = Loc.T("BLACK HOLE", "KARA DELİK"),
-            desc = Loc.T("Pulls everything in, harder near the core. The core destroys electrons.",
-                         "Her şeyi içine çeker, merkeze yaklaştıkça daha güçlü. Merkezi elektronları yok eder.") });
+            desc = Loc.T("Pulls everything in, harder near the core. Any electron that falls into the core is gone, however tightly bound.",
+                         "Her şeyi içine çeker; merkezine yaklaştıkça çekimi artar. Merkezine düşen elektron, bağı ne kadar sıkı olursa olsun yok olur.") });
         return list;
     }
 
@@ -162,9 +181,27 @@ public partial class GameUI
         BuildPreview(detail);
         detailName = Text(detail, "", 30, true, Color.white, TextAnchor.MiddleCenter, true);
         detailName.style.marginTop = 10;
+
+        // How it takes electrons: a colored badge and one line.
+        detailAttackRow = Box(detail);
+        detailAttackRow.style.alignItems = Align.Center;
+        detailAttackRow.style.marginTop = 6;
+        detailAttack = Text(detailAttackRow, "", 14, true, Color.white);
+        detailAttack.style.letterSpacing = 3;
+        detailAttack.style.paddingLeft = detailAttack.style.paddingRight = 10;
+        detailAttack.style.paddingTop = detailAttack.style.paddingBottom = 3;
+        Radius(detailAttack, 6);
+        detailAttack.pickingMode = PickingMode.Position;
+        detailAttack.RegisterCallback<PointerEnterEvent>(_ => attackTipHover = true);
+        detailAttack.RegisterCallback<PointerLeaveEvent>(_ => attackTipHover = false);
+        detailAttackNote = Text(detailAttackRow, "", 14, false, Dim, TextAnchor.MiddleCenter, true);
+        detailAttackNote.style.marginTop = 4;
+        detailAttackNote.style.maxWidth = 420;
         detailDesc = Text(detail, "", 18, false, new Color(1f, 1f, 1f, 0.85f), TextAnchor.UpperCenter, true);
         detailDesc.style.marginTop = 8;
         detailDesc.style.maxWidth = 420;
+
+        BuildAttackTip();
 
         var bottom = Column(indexScreen, 87f);
         Button(bottom, null, Loc.T("BACK", "GERİ"), "ESC", Dim, false, CloseIndex);
@@ -242,7 +279,7 @@ public partial class GameUI
     {
         if (!indexOpen) return;
         indexOpen = false;
-        if (gm != null) gm.OverlayOpen = false;
+        if (gm != null) gm.OverlayOpen = AnyOverlay;
     }
 
     void SetTab(int t)
@@ -313,11 +350,93 @@ public partial class GameUI
         detailName.text = seen ? e.name : "???";
         detailName.style.color = seen ? e.color : WithAlpha(Color.white, 0.4f);
         detailDesc.text = seen ? e.desc : Loc.T("Not discovered yet", "Henüz keşfedilmedi");
+        ShowAttack(seen ? e.attack : Attack.None);
         StartDemo(showDemo ? e.demo : Demo.None, e);
+    }
+
+    void BuildAttackTip()
+    {
+        attackTip = Box(indexScreen);
+        attackTip.pickingMode = PickingMode.Ignore;
+        attackTip.style.position = Position.Absolute;
+        attackTip.style.width = 330;
+        attackTip.style.paddingLeft = attackTip.style.paddingRight = 16;
+        attackTip.style.paddingTop = attackTip.style.paddingBottom = 12;
+        attackTip.style.backgroundColor = WithAlpha(Panel, 0.97f);
+        Radius(attackTip, 10);
+        attackTipTitle = Text(attackTip, "", 18, true, Color.white, TextAnchor.MiddleLeft, true);
+        attackTipTitle.style.letterSpacing = 2;
+        attackTipBody = Text(attackTip, "", 15, false, WithAlpha(Color.white, 0.9f), TextAnchor.UpperLeft, true);
+        attackTipBody.style.marginTop = 6;
+        attackTipHint = Text(attackTip, "", 14, true, Dim, TextAnchor.UpperLeft, true);
+        attackTipHint.style.marginTop = 8;
+        attackTip.style.opacity = 0f;
+        Show(attackTip, false);
+    }
+
+    void FillAttackTip(Attack a)
+    {
+        bool ion = a == Attack.Ionizing;
+        Color c = ion ? IonizingColor : DestructiveColor;
+        Border(attackTip, 2f, WithAlpha(c, 0.8f));
+        attackTipTitle.style.color = c;
+        attackTipTitle.text = ion ? Loc.T("IONIZING", "İYONLAŞTIRICI") : Loc.T("DESTRUCTIVE", "YOK EDİCİ");
+        attackTipBody.text = ion
+            ? Loc.T("Every electron holds on with its binding: 1 hit at first, more with each Electron Binding upgrade. Each hit from these uses one up; a hit with no binding left knocks the electron out of your atom (that is ionization).",
+                    "Her elektron bağıyla tutunur: başta 1 vuruş, her Elektron Bağı geliştirmesiyle daha fazla. Bunların her vuruşu bağdan birini harcar; bağı kalmamış bir elektrona gelen vuruş onu atomundan koparır (buna iyonlaşma denir).")
+            : Loc.T("Binding doesn't protect against these. Any electron they reach is destroyed in one go, however many Electron Binding upgrades you have.",
+                    "Bağ bunlara karşı korumaz. Ulaştıkları her elektron, kaç Elektron Bağı geliştirmen olursa olsun, tek seferde yok olur.");
+        attackTipHint.text = ion
+            ? Loc.T("Counter: Electron Binding upgrades.", "Karşı önlem: Elektron Bağı geliştirmeleri.")
+            : Loc.T("Counter: keep your electrons away from them.", "Karşı önlem: elektronlarını onlardan uzak tut.");
+    }
+
+    void UpdateAttackTip()
+    {
+        if (attackTip == null) return;
+        bool on = attackTipHover && indexOpen && shownAttack != Attack.None;
+        attackTipFade = Mathf.MoveTowards(attackTipFade, on ? 1f : 0f, Time.unscaledDeltaTime / 0.18f);
+        Show(attackTip, attackTipFade > 0f);
+        if (attackTipFade <= 0f) return;
+        // Just below the badge, centered on it (kept on screen).
+        Rect r = detailAttack.worldBound;
+        if (!float.IsNaN(r.width))
+        {
+            Vector2 c = indexScreen.WorldToLocal(new Vector2(r.center.x, r.yMax));
+            float w = indexScreen.layout.width;
+            float x = c.x - 165f;
+            if (!float.IsNaN(w) && w > 0f) x = Mathf.Clamp(x, 8f, w - 338f);
+            attackTip.style.left = x;
+            attackTip.style.top = c.y + 8f;
+        }
+        float e = attackTipFade * attackTipFade * (3f - 2f * attackTipFade);
+        attackTip.style.opacity = e;
+        attackTip.style.translate = new Translate(0f, 6f * (1f - e));
+    }
+
+    void ShowAttack(Attack a)
+    {
+        shownAttack = a;
+        if (a != Attack.None) FillAttackTip(a);
+        else attackTipHover = false;
+        Show(detailAttackRow, a != Attack.None);
+        if (a == Attack.None) return;
+        bool ion = a == Attack.Ionizing;
+        Color c = ion ? IonizingColor : DestructiveColor;
+        detailAttack.text = ion ? Loc.T("IONIZING", "İYONLAŞTIRICI") : Loc.T("DESTRUCTIVE", "YOK EDİCİ");
+        detailAttack.style.color = c;
+        detailAttack.style.backgroundColor = WithAlpha(c, 0.16f);
+        Border(detailAttack, 1.5f, WithAlpha(c, 0.7f));
+        detailAttackNote.text = ion
+            ? Loc.T("Each hit loosens an electron's binding; once none is left, the electron is knocked out.",
+                    "Her vuruş bir elektronun bağını gevşetir; bağı kalmayınca elektron kopar.")
+            : Loc.T("Ignores binding: any electron it reaches is destroyed at once.",
+                    "Bağı hiçe sayar: ulaştığı her elektronu anında yok eder.");
     }
 
     void UpdateIndex(GameManager.State st)
     {
+        UpdateAttackTip();
         bool allowed = st == GameManager.State.Title || st == GameManager.State.Paused;
         if (!allowed && indexOpen) CloseIndex();
 
@@ -333,9 +452,9 @@ public partial class GameUI
             else if (kb.upArrowKey.wasPressedThisFrame || kb.wKey.wasPressedThisFrame) Select(Mathf.Max(selected - 7, 0));
         }
 
-        gm.OverlayOpen = indexOpen;
+        gm.OverlayOpen = AnyOverlay;
         Show(indexScreen, indexOpen);
-        if (titleScreen != null) Show(titleScreen, st == GameManager.State.Title && !indexOpen);
+        if (titleScreen != null) Show(titleScreen, st == GameManager.State.Title && !AnyOverlay);
         if (pauseScreen != null) Show(pauseScreen, st == GameManager.State.Paused && !indexOpen);
         if (!indexOpen) return;
         if (builtTab != indexTab) RebuildGrid();

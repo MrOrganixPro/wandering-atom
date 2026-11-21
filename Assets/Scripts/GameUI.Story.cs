@@ -5,8 +5,8 @@ using UnityEngine.UIElements;
 
 /// <summary>
 /// The opening story: a black screen where lines fade in one by one, in silence; the music
-/// only begins once it is over. Plays on the very first launch, and again from the title's
-/// STORY button. Space / Enter / click shows the whole beat, then moves on; Esc skips it all.
+/// fades back in once it is over. Plays the first time the player presses PLAY (then the run
+/// starts), and again from the title's STORY button. Space / Enter / click shows the whole beat, then moves on; Esc skips it all.
 /// </summary>
 public partial class GameUI
 {
@@ -44,7 +44,7 @@ public partial class GameUI
     bool storyRunning, storyLeaving, storyClicked;
     int storyBeat = -1;           // -1 = lead-in
     float storyClock, storyLeaveAt, storyLead;
-    float storyCover = 1f;        // opacity of the black layer: starts black for the first launch
+    float storyCover = 0f;        // opacity of the black layer
     float storyFlashAmt, storyShake;
 
     // ------------------------------------------------------------------ text
@@ -72,92 +72,65 @@ public partial class GameUI
     {
         storyBeats = new List<StoryBeat>();
 
-        var sp = FindFirstObjectByType<EnemySpawner>();
-        Color radical = sp != null ? sp.shardColor : new Color(1f, 0.45f, 0.25f);
-        Color alpha = sp != null ? sp.bruteColor : new Color(0.85f, 0.25f, 0.6f);
-        Color positron = sp != null ? sp.missileColor : new Color(0.55f, 1f, 0.35f);
-        Color gamma = sp != null ? sp.flashColor : new Color(1f, 0.95f, 0.3f);
-        Color isotope = sp != null ? sp.brokenColor : new Color(0.7f, 0.55f, 1f);
         Color e = Pickup.OrbColor;
 
         Beat(Caption("GENEVA  ·  CERN", "CENEVRE  ·  CERN"),
              Line("One hundred metres beneath the earth.", "Yerin yüz metre altında."));
 
         Beat(Line("Twenty-seven kilometres of ring.", "Yirmi yedi kilometrelik bir halka."),
-             Line("A vacuum emptier than outer space.", "Uzayın kendisinden bile boş bir vakum."),
+             Line("A vacuum emptier than outer space.", "Uzay boşluğundan bile daha boş bir vakum."),
              Blank(),
              Big("And you.", "Ve sen."));
 
-        Beat(Line("One ordinary atom,", "Sıradan bir atom."),
-             Line("drafted for an experiment", "Kimsenin tam olarak anlamadığı"),
-             Line("no one fully understood.", "bir deney için seçilmiş."));
+        Beat(Line("One ordinary atom,", "Sıradan bir atom;"),
+             Line("drafted for an experiment", "kimsenin tam olarak anlamadığı"),
+             Line("no one fully understood.", "bir deneye seçilmişsin."));
 
         Beat(Line("They stripped away your " + Hi("electrons", e) + ".",
-                  Hi("Elektronlarını", e) + " tek tek söküp aldılar."),
-             Line("They hurled you around the ring", "Seni halkanın içinde,"),
+                  Hi("Elektronlarını", e) + " senden tek tek söküp aldılar."),
+             Line("They hurled you around the ring", "Sonra seni bu halkada"),
              Line("at " + B("99.9999991%") + " of the speed of light.",
-                  "ışık hızının " + B("%99,9999991") + "'iyle fırlattılar.")
+                  "ışık hızının " + B("%99,9999991") + "'ine kadar hızlandırdılar.")
         ).sfxOnLeave = "charge";
 
-        Beat(Big("Then — impact.", "Sonra... çarpışma.")).flash = true;
+        Beat(Big("Then — impact.", "Ve sonra... çarpışma.")).flash = true;
 
-        Beat(Line("The readings made no sense.", "Ölçümler hiçbir anlam ifade etmiyordu."),
+        Beat(Line("The readings made no sense.", "Ölçümlerin hiçbir anlamı yoktu."),
              Line("Something had gone wrong.", "Bir şeyler ters gitmişti."),
-             Line("Or terribly right.", "Ya da korkunç derecede yolunda."));
+             Line("Or terribly right.", "Ya da ürkütücü derecede doğru gitmişti."));
 
-        Beat(Line("Your core began to " + B("pull") + ".", "Çekirdeğin " + B("çekmeye") + " başladı."),
+        Beat(Line("Your core began to " + B("pull") + ".", "Çekirdeğin birden " + B("çekmeye") + " başladı:"),
              Line(Hi("Protons", NucleusColor) + ". " + Hi("Neutrons", NucleusColor) + ".",
-                  Hi("Protonları", NucleusColor) + ". " + Hi("Nötronları", NucleusColor) + "."),
-             Line("Anything that came too close.", "Fazla yaklaşan her şeyi."));
+                  Hi("Protonları", NucleusColor) + ", " + Hi("nötronları", NucleusColor) + ","),
+             Line("Anything that came too close.", "fazla yaklaşan ne varsa hepsini."));
 
         Beat(Line("And with every " + Hi("electron", e) + " you caught,",
-                  "Ve yakaladığın her " + Hi("elektronla", e)),
-             Line("your core grew heavier.", "çekirdeğin daha da ağırlaştı."),
+                  "Yakaladığın her " + Hi("elektronla", e)),
+             Line("your core grew heavier.", "çekirdeğin biraz daha ağırlaştı."),
              Line(Hi("Hydrogen. Helium. Carbon. Neon...", e), Hi("Hidrojen. Helyum. Karbon. Neon...", e)),
-             Line("A new element, every time.", "Her seferinde yeni bir element."));
+             Line("A new element, every time.", "Her seferinde başka bir element."));
 
         Beat(Line("But you are not alone down here.", "Ama burada yalnız değilsin."),
-             Line("The collision tore the chamber open", "Çarpışma deney alanını"),
-             Line("and filled it with stray particles.", "başıboş parçacıklarla doldurdu."));
-
-        Beat(Line(Hi("Free radicals", radical) + ", desperate to bond.",
-                  "Bağ kurmak için çırpınan " + Hi("serbest radikaller", radical) + "."),
-             Line(Hi("Alpha particles", alpha) + ", heavy and brutal.",
-                  "Ağır ve acımasız " + Hi("alfa parçacıkları", alpha) + "."),
-             Line(Hi("Positrons", positron) + " that hunt your electrons",
-                  "Elektronlarının peşini hiç bırakmayan"),
-             Line("and annihilate them on contact.",
-                  "ve dokunduğunu yok eden " + Hi("pozitronlar", positron) + "."));
-
-        Beat(Line(Hi("Gamma rays", gamma) + " that strike at the speed of light.",
-                  "Işık hızında vuran " + Hi("gama ışınları", gamma) + "."),
-             Line(Hi("Unstable isotopes", isotope) + ", decaying in fury.",
-                  "Öfkeyle bozunan " + Hi("kararsız izotoplar", isotope) + "."),
-             Line(Hi("Dust grains", RockColor) + " the size of mountains.",
-                  "Dağ büyüklüğünde " + Hi("toz taneleri", RockColor) + "."));
-
-        Beat(Line("And the one thing everyone feared", "Ve herkesin korktuğu o şey;"),
-             Line("this machine might someday create...", "bu makinenin bir gün yaratabileceği..."),
-             Blank(),
-             Big(Hi("A black hole.", WellColor), Hi("Bir kara delik.", WellColor)));
+             Line("The collision tore the chamber open", "Çarpışma hazneyi yarıp açtı"),
+             Line("and filled it with stray particles.", "ve içini başıboş parçacıklarla doldurdu."));
 
         Beat(Line("Your " + Hi("electrons", e) + " are your shield.",
-                  Hi("Elektronların", e) + " kalkanındır."),
+                  Hi("Elektronların", e) + " senin kalkanın."),
              Line("Your " + Hi("stability", Pickup.HeartColor) + " is your life.",
-                  Hi("Kararlılığın", Pickup.HeartColor) + " hayatındır."),
-             Line("Lose it all, and you come apart.", "Hepsini kaybedersen, parçalanırsın."));
+                  Hi("Kararlılığın", Pickup.HeartColor) + " ise canın."),
+             Line("Lose it all, and you come apart.", "Onu tamamen yitirirsen dağılırsın."));
 
         Beat(Line("Gather " + Hi("photons", Pickup.Gold) + " to break into the next sector.",
-                  "Bir sonraki bölgeye geçmek için " + Hi("fotonları", Pickup.Gold) + " topla."),
+                  "Sonraki bölgeye geçmek için " + Hi("foton", Pickup.Gold) + " topla."),
              Line("Collect " + Hi("quanta", Pickup.CoinColor) + ", and evolve.",
-                  Hi("Kuantaları", Pickup.CoinColor) + " topla ve evril."),
-             Line("Some say an atom can even become", "Derler ki bir atom,"),
-             Line("something else entirely...", "bambaşka bir şeye bile dönüşebilir..."));
+                  Hi("Kuanta", Pickup.CoinColor) + " biriktir ve evrimleş."),
+             Line("Some say an atom can even become", "Derler ki bir atom"),
+             Line("something else entirely...", "bambaşka bir şeye bile dönüşebilirmiş..."));
 
-        Beat(Line("They built this machine", "Bu makineyi,"),
-             Line("to find the smallest things in the universe.", "evrenin en küçük şeylerini bulmak için kurdular."),
+        Beat(Line("They will run this experiment again.", "Bu deneyi yine yapacaklar."),
+             Line("And again.", "Ve yine."),
              Blank(),
-             Big("Show them the biggest.", "Onlara en büyüğünü göster.")
+             Big("Make it count.", "Her birinin hakkını ver.")
         ).extraHold = 1.2f;
     }
 

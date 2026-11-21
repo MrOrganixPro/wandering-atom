@@ -161,6 +161,8 @@ MonoBehaviour:
   bruteSpeedMultiplier: 0.65
   brokenSpeedMultiplier: 2.5
   flashSpeedMultiplier: 8.9
+  gammaHits: 3
+  bruteSizePerLevel: 0.04
   bruteChance: 0.25
   maxBruteChance: 0.4
   bruteChancePerLevel: 0.02
@@ -168,10 +170,11 @@ MonoBehaviour:
   missileChance: 0.05
   maxMissileChance: 0.1
   missileChancePerLevel: 0.01
-  missileSpeedMultiplier: 1.55
-  missileSpeedPerLevel: 0.03
-  missileTurnRate: 60
-  missileTurnRatePerLevel: 4
+  missileSpeedMultiplier: 1.3
+  missileSpeedPerLevel: 0.02
+  missileTurnRate: 45
+  missileTurnRatePerLevel: 3
+  missileGiveUpAngle: 90
   flashUnlockLevel: 10
   flashChance: 0.05
   maxFlashChance: 0.1
@@ -181,6 +184,7 @@ MonoBehaviour:
   maxBrokenChance: 0.1
   brokenChancePerLevel: 0.08
   brokenPushInterval: 1.2
+  brokenAimDelay: 0.45
   brokenCoastDrag: 1
   brokenActiveTime: 8
   brokenActiveTimePerLevel: 0.5
@@ -197,6 +201,21 @@ MonoBehaviour:
   doubleUnlockLevel: 10
   doubleChance: 0.15
   doubleChancePerLevel: 0.04
+  attractionFreeElectrons: 4
+  attractionRatePerElectron: 0.03
+  attractionAimPerElectron: 0.012
+  attractionMaxAimedChance: 0.75
+  attractionBundlePerElectron: 0.008
+  gammaRainUnlockLevel: 6
+  gammaRainChance: 0.3
+  gammaRainChancePerLevel: 0.04
+  gammaRainStart: {x: 8, y: 20}
+  gammaRainWarning: 2.5
+  gammaRainRays: 6
+  gammaRainRaysPerLevel: 0.5
+  gammaRainDuration: 3.5
+  gammaRainSpread: 0.8
+  gammaRainAimTime: 0.7
   startWarningTime: 1.1
   warningDropPerLevel: 0.05
   laneSpread: 0.9
@@ -277,22 +296,24 @@ MonoBehaviour:
   wellInterval: {x: 22, y: 35}
   wellCoreRadius: 1
   wellPullRadius: 15
-  wellPullStrength: 15
+  wellPullStrength: 12
   wellPullPerLevel: 0.6
   wellCorePullMultiplier: 2
   wellSpeed: {x: 0.3, y: 0.6}
   maxWells: 1
-  coinsPerLevel: 2
+  coinsPerLevel: 1
   coinMinDistance: 7
   coinMaxDistance: 15
   heartChancePerLevel: 0.08
+  neutrinoPickupChance: 0.04
+  neutrinoPickupDelay: {x: 8, y: 25}
   heartMinInterval: 35
   heartMaxInterval: 70
   heartMinDistance: 5
   heartMaxDistance: 10
   upgradeChoices: 3
-  speedPerUpgrade: 0.2
-  thrustPerUpgrade: 0.2
+  speedPerUpgrade: 0.1
+  thrustPerUpgrade: 0.1
   torquePerUpgrade: 4
   turnAuthorityPerTorque: 0.15
   maxBallArmorUpgrades: 2
@@ -307,12 +328,23 @@ MonoBehaviour:
   rareChance: 0.05
   orbsPerRecycledCoin: 5
   orbsPerRecycledHeart: 3
+  firstShellLength: 1
+  shellLengthStep: 0.62
+  coinsPerExtraShell: 1
+  orbitalOfferChance: 0.8
+  orbitalOfferFalloff: 0.45
+  upgradeFlyTime: 0.6
+  upgradeSpinTime: 1.6
+  upgradeCoreFlyTime: 0.7
+  upgradeAbsorbTime: 0.9
+  upgradeCoreReturnTime: 0.6
+  upgradeSpeedup: 0.72
+  upgradeMinPace: 0.3
   characterUnlockLevel: 5
   characterChance: 0.05
   mysteryRevealTime: 2.4
   challengerCoins: 3
   sluggishTighten: 0.7
-  sluggishExtraShellCapacity: 18
   sluggishMaxBallArmor: 4
   sluggishUpgradeCap: 2
   sluggishOrbMultiplier: 2
@@ -528,6 +560,11 @@ MonoBehaviour:
   thrusterColor: {r: 1, g: 0.55, b: 0.15, a: 1}
   driveColor: {r: 0.6, g: 0.88, b: 1, a: 1}
   meltdownTime: 1.2
+  protonColor: {r: 1, g: 0.62, b: 0.45, a: 1}
+  neutronColor: {r: 0.62, g: 0.6, b: 0.58, a: 1}
+  nucleusBaseRadius: 0.27
+  nucleusGrowth: 0.06
+  nucleusMaxRadius: 0.72
   thrustAcceleration: 10
   pivotDrag: 1.1
   maxPivotSpeed: 6
@@ -586,6 +623,7 @@ MonoBehaviour:
   turretTurnSpeed: 900
   turretMountTurnSpeed: 540
   turretColor: {r: 0.8, g: 1, b: 0.35, a: 1}
+  upgradeHidden: 0
 --- !u!1 &619394800
 GameObject:
   m_ObjectHideFlags: 0

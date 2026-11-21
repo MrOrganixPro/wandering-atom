@@ -46,6 +46,8 @@ public class EnemySpawner : MonoBehaviour
     public int gammaHits = 3;
 
     [Header("Types")]
+    [Tooltip("Alpha particles grow this much bigger every level (x1 on level 1; growth slows down but never stops).")]
+    public float bruteSizePerLevel = 0.04f;
     [Tooltip("Chance a single enemy is a Brute instead of a Shard.")]
     [Range(0f, 1f)] public float bruteChance = 0.25f;
     [Range(0f, 1f)] public float maxBruteChance = 0.45f;
@@ -56,12 +58,14 @@ public class EnemySpawner : MonoBehaviour
     [Range(0f, 1f)] public float missileChance = 0.07f;
     [Range(0f, 1f)] public float maxMissileChance = 0.14f;
     public float missileChancePerLevel = 0.01f;
-    public float missileSpeedMultiplier = 1.45f;
+    public float missileSpeedMultiplier = 1.25f;
     [Tooltip("Missile speed multiplier grows by this every level after it unlocks.")]
-    public float missileSpeedPerLevel = 0.03f;
+    public float missileSpeedPerLevel = 0.02f;
     [Tooltip("How fast the missile can turn (deg/s) when it first unlocks.")]
-    public float missileTurnRate = 60f;
-    public float missileTurnRatePerLevel = 4f;
+    public float missileTurnRate = 45f;
+    public float missileTurnRatePerLevel = 3f;
+    [Tooltip("Once the atom is more than this many degrees off its heading, the positron gives up and flies on straight.")]
+    public float missileGiveUpAngle = 90f;
 
     [Header("Rare: Lightning Flash")]
     public int flashUnlockLevel = 4;
@@ -76,6 +80,8 @@ public class EnemySpawner : MonoBehaviour
     public float brokenChancePerLevel = 0.01f;
     [Tooltip("Seconds between its pushes.")]
     public float brokenPushInterval = 1.2f;
+    [Tooltip("It aims each push at where the atom was this many seconds ago (not where it is now), so moving dodges it.")]
+    public float brokenAimDelay = 0.45f;
     [Tooltip("How quickly it slows down between pushes (higher = shorter coasts).")]
     public float brokenCoastDrag = 2.2f;
     [Tooltip("Seconds it keeps pushing before its engine dies (on its unlock level).")]
@@ -292,10 +298,13 @@ public class EnemySpawner : MonoBehaviour
         }
     }
 
-    /// <summary>One ray of the rain: from the rain's side of the screen, aimed at a spot near the atom.</summary>
+    /// <summary>
+    /// One ray of the rain, aimed at a spot near the atom. The rays come from all around: each one
+    /// a golden angle (~137.5 deg) on from the last, so no side is ever safe for long.
+    /// </summary>
     void SpawnRainRay()
     {
-        float angle = rainSide + Random.Range(-40f, 40f);
+        float angle = rainSide + rainSpawned * 137.508f + Random.Range(-12f, 12f);
         var mover = SpawnFlash(angle);
         if (mover == null) return;
         Vector2 pivot = pendulumController != null ? pendulumController.PivotPosition : GameManager.ViewCenter;
@@ -311,6 +320,9 @@ public class EnemySpawner : MonoBehaviour
 
     /// <summary>"Effective levels" after n levels: n at first, then growing ever more slowly (but without limit).</summary>
     float Soft(float n) => n <= 0f ? 0f : growthSoftness * Mathf.Log(1f + n / Mathf.Max(0.01f, growthSoftness));
+
+    /// <summary>Alpha particle size this level: 1 on level 1, a little bigger every level.</summary>
+    float BruteScale => Grow(1f, bruteSizePerLevel, level - 1);
 
     /// <summary>start + perLevel for each (softened) level.</summary>
     float Grow(float start, float perLevel, float n) => start + perLevel * Soft(n);
@@ -404,7 +416,7 @@ public class EnemySpawner : MonoBehaviour
         PickPath(fromAngle, warnTime, out Vector2 start, out Vector2 dir, out float len);
         var go = new GameObject("Warning");
         warnings.Add(go);
-        float laneW = type == EnemyType.Brute ? 1.9f : 0f;   // huge enemy, wide lane
+        float laneW = type == EnemyType.Brute ? 1.9f * BruteScale : 0f;   // huge enemy, wide lane
         go.AddComponent<SpawnWarning>().Init(start, dir, len, color, warnTime, 1, laneW,
             () => SpawnEnemy(type, color, start, dir, speed));
     }
@@ -453,10 +465,11 @@ public class EnemySpawner : MonoBehaviour
         enemy.transform.position = start;
         var mover = enemy.AddComponent<EnemyMover>();
         mover.Setup(type, color, dir, speed, impactForce, pendulumController,
-            type == EnemyType.Shard ? shardSize : 1f);
+            type == EnemyType.Shard ? shardSize : type == EnemyType.Brute ? BruteScale : 1f);
         if (type == EnemyType.Broken)
         {
             mover.brokenPushInterval = Mathf.Max(0.1f, brokenPushInterval);
+            mover.brokenAimDelay = Mathf.Max(0f, brokenAimDelay);
             int over = Mathf.Max(0, level - brokenUnlockLevel);
             mover.brokenPushSpeed = BaseSpeed * brokenSpeedMultiplier;
             mover.brokenCoastDrag = brokenCoastDrag;
@@ -470,7 +483,10 @@ public class EnemySpawner : MonoBehaviour
             mover.flashHits = Mathf.Max(1, gammaHits);
         }
         if (type == EnemyType.Missile)
+        {
             mover.missileTurnRate = Grow(missileTurnRate, missileTurnRatePerLevel, Mathf.Max(0, level - missileUnlockLevel));
+            mover.missileGiveUpAngle = missileGiveUpAngle;
+        }
         enemies.Add(enemy);
         return mover;
     }

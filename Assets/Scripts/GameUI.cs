@@ -158,6 +158,9 @@ public partial class GameUI : MonoBehaviour
         BuildUpgrade();
         BuildAnnounce();
         BuildIndex();
+        BuildLab();
+        BuildChooser();
+        BuildLesson();
         BuildStory();   // last: it covers everything
     }
 
@@ -390,6 +393,7 @@ public partial class GameUI : MonoBehaviour
         coinPips = MakePips(left, ProcSprites.Quanta, 20, 4, 340);
         coinPips.row.style.justifyContent = Justify.FlexStart;
         coinPips.row.style.marginTop = 6;
+        BuildHudNeutrinos(left);
 
         heartMeter = MakeMeter(left, ProcSprites.Stability, Pickup.HeartColor);
         coinMeter = MakeMeter(left, ProcSprites.Quanta, Pickup.CoinColor);
@@ -470,6 +474,7 @@ public partial class GameUI : MonoBehaviour
         var buttonsCol = Column(titleScreen, 45f);
         Button(buttonsCol, ProcSprites.Arrow, Loc.T("PLAY", "OYNA"), Loc.T("SPACE", "BOŞLUK"), Pickup.OrbColor, true, () => gm.NewRun());
         Button(buttonsCol, ProcSprites.Photon, Loc.T("INDEX", "DİZİN"), "I", Pickup.Gold, false, () => OpenIndex());
+        Button(buttonsCol, ProcSprites.DataChip, Loc.T("LAB", "LABORATUVAR"), "L", Lab.DataColor, false, () => OpenLab());
         Button(buttonsCol, null, Loc.T("STORY", "HİKÂYE"), null, Dim, false, () => gm.PlayStory());
         quitButtonRoot = Button(buttonsCol, null, Loc.T("QUIT", "ÇIKIŞ"), null, Dim, false, () => gm.QuitApp()).root;
 
@@ -491,7 +496,7 @@ public partial class GameUI : MonoBehaviour
 
         var move = LegendGroup(legend);
         foreach (var k in new[] { "W", "A", "S", "D" }) Keycap(move, k).style.marginRight = 3;
-        LegendWord(move, Loc.T("/ drag  fly", "/ sürükle  uç"));
+        LegendWord(move, Loc.T("/ drag  fly", "/ sürükleyerek uç"));
 
         var pause = LegendGroup(legend);
         Keycap(pause, "ESC");
@@ -499,15 +504,15 @@ public partial class GameUI : MonoBehaviour
 
         var star = LegendGroup(legend);
         Icon(star, ProcSprites.Photon, 26, Pickup.Gold);
-        LegendWord(star, Loc.T("photons: next level", "foton: sonraki seviye"));
+        LegendWord(star, Loc.T("photons: next level", "fotonlar: sonraki seviye"));
 
         var orb = LegendGroup(legend);
         Icon(orb, ProcSprites.Electron, 24, Pickup.OrbColor);
-        LegendWord(orb, Loc.T("electrons: shield", "elektron: kalkan"));
+        LegendWord(orb, Loc.T("electrons: shield", "elektronlar: kalkan"));
 
         var coin = LegendGroup(legend);
         Icon(coin, ProcSprites.Quanta, 22, Pickup.CoinColor);
-        LegendWord(coin, Loc.T("quanta: upgrades", "kuanta: geliştirme"));
+        LegendWord(coin, Loc.T("quanta: upgrades", "kuanta: geliştirmeler"));
     }
 
     /// <summary>Small EN / TR toggle; the active one is filled.</summary>
@@ -548,6 +553,7 @@ public partial class GameUI : MonoBehaviour
         introLevel.style.letterSpacing = 6;
         introStars = MakePips(col, ProcSprites.Photon, 34, 6, 700);
         introStars.row.style.marginTop = 10;
+        BuildIntroQuanta(col);
     }
 
     void BuildPause()
@@ -563,7 +569,7 @@ public partial class GameUI : MonoBehaviour
 
         var buttonsCol = Column(pauseScreen, 50f);
         Button(buttonsCol, ProcSprites.Arrow, Loc.T("RESUME", "DEVAM"), "ESC", Pickup.OrbColor, true, () => gm.Resume());
-        Button(buttonsCol, ProcSprites.TurnArrow, Loc.T("RESTART", "YENİDEN"), "R", Color.white, false, () => gm.RetryLevel());
+        Button(buttonsCol, ProcSprites.TurnArrow, Loc.T("RESTART", "YENİDEN BAŞLA"), "R", Color.white, false, () => gm.RetryLevel());
         Button(buttonsCol, ProcSprites.Photon, Loc.T("INDEX", "DİZİN"), "I", Pickup.Gold, false, () => OpenIndex());
         Button(buttonsCol, null, Loc.T("MENU", "MENÜ"), "M", Dim, false, () => gm.QuitToTitle());
     }
@@ -578,12 +584,13 @@ public partial class GameUI : MonoBehaviour
         completeSub.style.letterSpacing = 12;
         completeCoins = MakePips(col, ProcSprites.Quanta, 34, 8, 700);
         completeCoins.row.style.marginTop = 20;
+        BuildNeutrinoAward(col);
     }
 
     void BuildGameOver()
     {
         gameOverScreen = Layer(root);
-        var col = Column(gameOverScreen, 14f);
+        var col = Column(gameOverScreen, 7f);
         var title = Text(col, Loc.T("GAME OVER", "OYUN BİTTİ"), 72, true, Danger);
         title.style.letterSpacing = 6;
         gameOverLevel = Text(col, "", 28, true, Color.white);
@@ -594,12 +601,13 @@ public partial class GameUI : MonoBehaviour
         gameOverBest = Text(col, "", 16, true, Dim);
         gameOverBest.style.marginTop = 8;
         gameOverBest.style.letterSpacing = 3;
+        BuildPayout(col);
 
         // Two choices: replay this level with the run's upgrades, or a fresh run from level 1.
         gameOverButtons = Row(gameOverScreen);
         gameOverButtons.style.position = Position.Absolute;
         gameOverButtons.style.left = gameOverButtons.style.right = 0;
-        gameOverButtons.style.top = Length.Percent(52);
+        gameOverButtons.style.top = Length.Percent(60);
         gameOverButtons.style.justifyContent = Justify.Center;
         gameOverButtons.style.alignItems = Align.FlexStart;
 
@@ -616,6 +624,12 @@ public partial class GameUI : MonoBehaviour
         newRunColumn.style.marginLeft = newRunColumn.style.marginRight = 16;
         Button(newRunColumn, ProcSprites.Arrow, Loc.T("LEVEL 1", "SEVİYE 1"), "N", Color.white, false, () => gm.NewRun()).root.style.marginTop = 13;
         Text(newRunColumn, Loc.T("new run", "yeni oyun"), 15, false, Dim).style.marginTop = 4;
+
+        var labCol = Box(gameOverButtons);
+        labCol.style.alignItems = Align.Center;
+        labCol.style.marginLeft = labCol.style.marginRight = 16;
+        Button(labCol, ProcSprites.DataChip, Loc.T("LAB", "LABORATUVAR"), "L", Lab.DataColor, false, () => OpenLab()).root.style.marginTop = 13;
+        Text(labCol, Loc.T("spend your data", "verini harca"), 15, false, Dim).style.marginTop = 4;
     }
 
     // ---------------------------------------------------------------- update
@@ -630,14 +644,16 @@ public partial class GameUI : MonoBehaviour
         Show(introScreen, st == GameManager.State.Playing && gm.LevelTime < 2.5f);
         Show(pauseScreen, st == GameManager.State.Paused);
         Show(completeScreen, st == GameManager.State.LevelComplete);
-        Show(gameOverScreen, st == GameManager.State.GameOver);
+        Show(gameOverScreen, st == GameManager.State.GameOver && !labOpen && !chooserOpen);
         Show(upgradeScreen, st == GameManager.State.Upgrade);
 
         if (st != GameManager.State.Title && st != GameManager.State.Story) UpdateHud(st);
         UpdateIndex(st);
+        UpdateLab(st);
         UpdateUpgradeWorld(st);
         UpdateAnnounce(st);
         UpdateStory(st);
+        UpdateLesson(st);
         UpdateButtons();
 
         switch (st)
@@ -648,7 +664,7 @@ public partial class GameUI : MonoBehaviour
                 titleName.style.translate = new Translate(0f, 4f * Mathf.Sin(ut * 1.3f));
                 titleName.style.color = Color.Lerp(Pickup.OrbColor, Color.white, 0.15f + 0.15f * Mathf.Sin(ut * 2f));
                 titleAccent.style.width = 380f + 60f * (0.5f + 0.5f * Mathf.Sin(ut * 1.3f));
-                titleBest.text = gm.BestLevel > 1 ? Loc.T("BEST  LEVEL ", "EN İYİ  SEVİYE ") + gm.BestLevel : "";
+                titleBest.text = gm.BestLevel > 1 ? Loc.T("BEST  LEVEL ", "EN YÜKSEK  SEVİYE ") + gm.BestLevel : "";
                 break;
             }
 
@@ -661,6 +677,7 @@ public partial class GameUI : MonoBehaviour
                     introLevel.style.opacity = a;
                     introStars.Set(gm.StarsNeeded, gm.StarsNeeded, Pickup.Gold, Pickup.Gold);
                     introStars.row.style.opacity = a;
+                    UpdateIntroQuanta(t, a);
                     float pop = 1f + 0.25f * Mathf.Clamp01(1f - t / 0.25f);
                     introLevel.style.scale = new Scale(new Vector3(pop, pop, 1f));
                 }
@@ -681,6 +698,7 @@ public partial class GameUI : MonoBehaviour
                 // Coins pop in one by one.
                 int shown = Mathf.Clamp(Mathf.FloorToInt((gm.StateTime - 0.4f) / 0.25f) + 1, 0, coins);
                 completeCoins.Set(coins, shown, Pickup.CoinColor, Color.clear);
+                UpdateNeutrinoAward(coins);
                 break;
             }
 
@@ -691,8 +709,9 @@ public partial class GameUI : MonoBehaviour
                 gameOverScreen.style.opacity = a;
                 gameOverLevel.text = Loc.T("LEVEL ", "SEVİYE ") + gm.Level;
                 gameOverStars.Set(gm.StarsNeeded, gm.StarsCollected, Pickup.Gold, Faint);
-                gameOverBest.text = Loc.T("BEST  LEVEL ", "EN İYİ  SEVİYE ") + gm.BestLevel;
+                gameOverBest.text = Loc.T("BEST  LEVEL ", "EN YÜKSEK  SEVİYE ") + gm.BestLevel;
                 retryButton.label.text = Loc.T("LEVEL ", "SEVİYE ") + gm.Level;
+                UpdatePayout();
                 UpdateStrip(gameOverStrip);
                 Show(gameOverButtons, gm.StateTime > 0.8f);
                 Show(newRunColumn, gm.Level > 1);
@@ -868,10 +887,12 @@ public partial class GameUI : MonoBehaviour
         Show(pauseButton, st == GameManager.State.Playing);
 
         UpdateElementTile();
+        UpdateHudNeutrinos();
 
         if (shownLevel != gm.Level) { shownLevel = gm.Level; levelLabel.text = Loc.T("LEVEL ", "SEVİYE ") + shownLevel; }
         starPips.Set(gm.StarsNeeded, gm.StarsCollected, Pickup.Gold, Faint);
-        coinPips.Set(Mathf.Max(gm.CoinsPerLevel, gm.LevelCoins), gm.LevelCoins, Pickup.CoinColor, Faint);
+        coinPips.Set(Mathf.Max(gm.LevelQuanta, gm.LevelCoins), gm.LevelCoins, Pickup.CoinColor, Faint);
+        GlowNewQuantaPips();
         heartPips.Set(gm.MaxHealth, gm.Lives, Pickup.HeartColor, Faint);
 
         if (shownCharacter != gm.ActiveCharacter)

@@ -1150,7 +1150,8 @@ public class PendulumController : MonoBehaviour
     /// returned, so the enemy can show it being snatched or knocked away. Electrons listed in
     /// 'skip' are passed through (piercing gamma rays); the one hit is added to it.
     /// </summary>
-    public ElectronHit HitElectron(Vector2 p, float r, out Vector2 takenPos, out Color takenColor, List<object> skip = null)
+    public ElectronHit HitElectron(Vector2 p, float r, out Vector2 takenPos, out Color takenColor, List<object> skip = null,
+                                   bool ignoreBinding = false)
     {
         takenPos = p;
         takenColor = Pickup.OrbColor;
@@ -1162,6 +1163,7 @@ public class PendulumController : MonoBehaviour
             if ((skip != null && skip.Contains(b)) || (b.pos - p).sqrMagnitude >= rb * rb) continue;
             skip?.Add(b);
             OnHitReaction();
+            if (ignoreBinding) b.hp = 0;
             if (--b.hp > 0)
             {
                 b.damageFlash = 1f;
@@ -1218,6 +1220,19 @@ public class PendulumController : MonoBehaviour
     // ---------------------------------------------------------- hit reactions
 
     /// <summary>The thruster or a ball was hit: fire the unlocked Repel blast and Emergency Booster.</summary>
+    /// <summary>Lab Second Wind: a white shockwave (a repel blast, whatever the Repel level) and a moment of invulnerability.</summary>
+    public void SecondWind(float invulnerable)
+    {
+        if (!alive) return;
+        invulTimer = Mathf.Max(invulTimer, invulnerable);
+        int keep = repelLevel;
+        repelLevel = Mathf.Max(1, repelLevel);
+        RepelBlast();
+        repelLevel = keep;
+        ShockRing.Spawn(PivotPosition, 5f, Color.white);
+        ParticleBursts.Burst(PivotPosition, Color.white, 40, 9f, 0.3f, 0.8f);
+    }
+
     void OnHitReaction()
     {
         if (!alive) return;

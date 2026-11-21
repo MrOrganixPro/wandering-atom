@@ -70,6 +70,56 @@ public static class ProcSprites
         return new Color(1, 1, 1, Mathf.Pow(Mathf.Clamp01(1f - r), 2.2f));
     });
 
+    /// <summary>
+    /// Neutrino, the ghost particle: a pinpoint white core in a wide, very pale halo, ringed by
+    /// a few faint specks (it barely interacts with anything). 1 world unit across.
+    /// </summary>
+    public static Sprite Neutrino => Build("Neutrino", 128, 128, 128f, (x, y) =>
+    {
+        float r = Mathf.Sqrt(x * x + y * y);
+        float core = Mathf.Exp(-(r * r) / (0.11f * 0.11f));
+        float halo = 0.42f * Mathf.Pow(Mathf.Clamp01(1f - r), 2.6f);
+        float a = Mathf.Atan2(y, x);
+        // Two faint rings of specks, offset from each other.
+        float specks = 0f;
+        for (int ring = 0; ring < 2; ring++)
+        {
+            float rr = ring == 0 ? 0.52f : 0.78f;
+            int n = ring == 0 ? 6 : 9;
+            float seg = Mathf.PI * 2f / n;
+            float ang = Mathf.Repeat(a + ring * 0.35f, seg) - seg * 0.5f;
+            float d = new Vector2(ang * rr, r - rr).magnitude;
+            specks = Mathf.Max(specks, (ring == 0 ? 0.55f : 0.32f) * Mathf.Clamp01(1f - d / 0.045f));
+        }
+        float alpha = Mathf.Clamp01(core + halo + specks);
+        float v = Mathf.Clamp01(0.82f + 0.18f * core);
+        return new Color(v, v, v, alpha);
+    });
+
+    /// <summary>Research Data: a little chip, a rounded square with a core and pins on every side.</summary>
+    public static Sprite DataChip => Build("DataChip", 128, 128, 128f, (x, y) =>
+    {
+        float ax = Mathf.Abs(x), ay = Mathf.Abs(y);
+        // Body: rounded square.
+        float qx = Mathf.Max(ax - 0.42f, 0f), qy = Mathf.Max(ay - 0.42f, 0f);
+        float body = 0.14f - Mathf.Sqrt(qx * qx + qy * qy);
+        float a = AA(body, 0.03f);
+        // Pins: three short bars on each side.
+        float pin = 0f;
+        for (int i = -1; i <= 1; i++)
+        {
+            float c = i * 0.3f;
+            pin = Mathf.Max(pin, AA(Mathf.Min(0.07f - Mathf.Abs(x - c), 0.13f - Mathf.Abs(ay - 0.78f)), 0.03f));
+            pin = Mathf.Max(pin, AA(Mathf.Min(0.07f - Mathf.Abs(y - c), 0.13f - Mathf.Abs(ax - 0.78f)), 0.03f));
+        }
+        // Inner core: a darker square with a bright dot.
+        float core = AA(Mathf.Min(0.26f - ax, 0.26f - ay), 0.03f);
+        float dot = AA(0.1f - Mathf.Sqrt(x * x + y * y), 0.03f);
+        float v = Mathf.Lerp(1f, 0.45f, core);
+        v = Mathf.Lerp(v, 1f, dot);
+        return Gray(Mathf.Max(v * a, pin), Mathf.Max(a, pin));
+    });
+
     /// <summary>Thin circle outline at radius 0.97 (of half-size). 1 world unit across.</summary>
     public static Sprite Ring => Build("Ring", 512, 512, 512f, (x, y) =>
     {

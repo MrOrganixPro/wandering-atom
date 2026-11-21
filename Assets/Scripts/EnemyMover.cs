@@ -40,6 +40,7 @@ public class EnemyMover : MonoBehaviour
 
     // Missile tuning.
     [HideInInspector] public float missileTurnRate = 60f;   // deg/s, set by the spawner (grows per level)
+    [HideInInspector] public float missileGiveUpAngle = 90f; // the atom got this far off its heading: it stops chasing
     public static float MissileRelockTime = 1.2f;    // seconds without lock after a Repel blast
 
     // Flash tuning.
@@ -53,6 +54,10 @@ public class EnemyMover : MonoBehaviour
 
     // Broken Thruster tuning (set by the spawner before the first Update).
     [HideInInspector] public float brokenPushInterval = 1.2f;   // seconds between pushes
+    [HideInInspector] public float brokenAimDelay = 0.45f;      // aims at where the atom was this long ago
+
+    // Where the atom has been lately (time, position), for the isotope's delayed aim.
+    readonly System.Collections.Generic.Queue<Vector3> aimHistory = new System.Collections.Generic.Queue<Vector3>();
     [HideInInspector] public float brokenPushSpeed = 10f;       // speed right after a push
     [HideInInspector] public float brokenCoastDrag = 2.2f;      // how fast it slows down between pushes
     [HideInInspector] public float brokenActiveTime = 6f;       // seconds of pushing before the engine dies
@@ -133,8 +138,8 @@ public class EnemyMover : MonoBehaviour
         switch (type)
         {
             case EnemyType.Brute:
-                bodyScale = 1.9f;
-                radius = 0.82f;
+                bodyScale = 1.9f * sizeScale;   // grows level by level (set by the spawner)
+                radius = 0.82f * sizeScale;
                 hp = 2;
                 bodySprite = ProcSprites.Alpha;   // alpha particle
                 spin = (Random.value < 0.5f ? -1f : 1f) * Random.Range(15f, 30f);
@@ -310,7 +315,8 @@ public class EnemyMover : MonoBehaviour
         // Electron contact: both take a hit; an electron out of hits is snatched (see the class notes).
         Vector2 takenPos = p;
         Color takenColor = Pickup.OrbColor;
-        var hit = hitCooldown <= 0f ? pc.HitElectron(p, radius, out takenPos, out takenColor)
+        // A positron annihilates any electron it touches, however tightly bound (armor doesn't help).
+        var hit = hitCooldown <= 0f ? pc.HitElectron(p, radius, out takenPos, out takenColor, null, type == EnemyType.Missile)
                                     : PendulumController.ElectronHit.None;
         if (hit != PendulumController.ElectronHit.None)
         {
@@ -404,7 +410,7 @@ public class EnemyMover : MonoBehaviour
     // ------------------------------------------------------------------ bonds
 
     float ElectronSize => pendulumController != null ? pendulumController.ElectronSize : 0.32f;
-    float CaptureOrbit => type == EnemyType.Brute ? 1.05f : Mathf.Max(radius * 1.9f, 0.34f);
+    float CaptureOrbit => type == EnemyType.Brute ? radius * 1.28f : Mathf.Max(radius * 1.9f, 0.34f);
 
     /// <summary>A snatched electron: snaps from where it was onto an orbit around this enemy.</summary>
     void Capture(Vector2 from, Color c)
@@ -626,6 +632,13 @@ public class EnemyMover : MonoBehaviour
         speed = floor + (speed - floor) * Mathf.Exp(-brokenCoastDrag * dt);
         if (speed < 0.05f) speed = 0.05f;   // keep a direction for the off-screen check
 
+        if (target)
+        {
+            // Remember the atom's path; the next push aims at an old point on it.
+            aimHistory.Enqueue(new Vector3(age, pc.PivotPosition.x, pc.PivotPosition.y));
+            while (aimHistory.Count > 1 && aimHistory.Peek().x < age - brokenAimDelay - 0.5f) aimHistory.Dequeue();
+        }
+
         if (!gaveUp)
         {
             pushTimer -= dt;
@@ -667,13 +680,26 @@ public class EnemyMover : MonoBehaviour
         }
     }
 
+    /// <summary>The atom's position brokenAimDelay seconds ago (or the oldest one remembered).</summary>
+    Vector2 DelayedTarget(PendulumController pc)
+    {
+        Vector2 best = pc.PivotPosition;
+        float want = age - brokenAimDelay;
+        foreach (Vector3 h in aimHistory)
+        {
+            best = new Vector2(h.y, h.z);
+            if (h.x >= want) break;   // the first sample at or after that moment
+        }
+        return best;
+    }
+
     void Push(PendulumController pc, Vector2 pos)
     {
         pushTimer = brokenPushInterval;
         pushes++;
 
-        // Re-aim at the thruster (a little ahead of it).
-        Vector2 aimAt = pc.PivotPosition + pc.PivotVelocity * 0.25f;
+        // Re-aim at where the atom was a moment ago, not where it is now: keep moving and it misses.
+        Vector2 aimAt = DelayedTarget(pc);
         Vector2 to = aimAt - pos;
         if (to.sqrMagnitude > 1e-4f)
         {
@@ -704,10 +730,22 @@ public class EnemyMover : MonoBehaviour
     {
         bool target = pc != null && pc.IsAlive;
         if (!target) locked = false;
-        else if (!locked)
+        else if (!locked && !gaveUp)
         {
             relockTimer -= dt;
-            if (relockTimer <= 0f) locked = true;   // never gives up for good
+            if (relockTimer <= 0f) locked = true;
+        }
+
+        if (locked)
+        {
+            Vector2 to = pc.PivotPosition - (Vector2)transform.position;
+            float angle = Vector2.SignedAngle(moveDirection, to);
+            // Outmaneuvered (the atom got behind it): it gives up for good and flies on straight.
+            if (age > 1f && Mathf.Abs(angle) > missileGiveUpAngle)
+            {
+                locked = false;
+                gaveUp = true;
+            }
         }
 
         if (locked)

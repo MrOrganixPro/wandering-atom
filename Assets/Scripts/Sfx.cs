@@ -42,6 +42,7 @@ public static class Sfx
         // Spaceship turret: a short, buzzy laser chirp.
         clips["shoot"] = Synth("shoot", 0.11f, t => 1750f * Mathf.Exp(-t * 18f) + 420f, 0.06f, 20f, 0.32f, 0.5f);
         clips["reveal"] = Reveal();
+        clips["neutrino"] = Neutrino();
         // Core meltdown: a low, rising, trembling rumble; then the blast.
         clips["meltdown"] = Synth("meltdown", 1.2f, t => 55f + 170f * t * t + 25f * Mathf.Sin(t * 70f), 0.45f, 0.4f, 0.5f, 0.3f);
         clips["explode"] = Synth("explode", 1.5f, t => 95f * Mathf.Exp(-t * 3f) + 28f, 0.75f, 3.2f, 0.95f);
@@ -94,6 +95,43 @@ public static class Sfx
 
             float env = 0.25f + 0.75f * b2;
             return (hum * 0.35f + rumble * 0.4f + tone * 0.5f) * env * 0.55f;
+        });
+    }
+
+    /// <summary>
+    /// Neutrino earned: two struck glass tones (inharmonic partials, like a wine glass or a glass
+    /// bell) ringing a fifth apart with a slow shimmer, over a breath of airy noise.
+    /// </summary>
+    static AudioClip Neutrino()
+    {
+        float[] ratios = { 1f, 2.32f, 4.25f, 6.63f };   // glass-like, not whole-number harmonics
+        float[] amps = { 1f, 0.45f, 0.22f, 0.1f };
+        float[] decays = { 2.2f, 3.6f, 6f, 9f };
+        float[] roots = { 1318.5f, 1975.5f };         // E6, then B6
+        float[] starts = { 0f, 0.11f };
+        float[,] ph = new float[2, 4];
+        float lp = 0f, hp = 0f;
+        var rng = new System.Random(23);
+        return Build("neutrino", 1.8f, t =>
+        {
+            float v = 0f;
+            for (int n = 0; n < 2; n++)
+            {
+                float tt = t - starts[n];
+                if (tt < 0f) continue;
+                float attack = Mathf.Clamp01(tt * 900f);
+                for (int i = 0; i < ratios.Length; i++)
+                {
+                    float shimmer = 1f + 0.0025f * Mathf.Sin(tt * (5.5f + i * 1.7f));
+                    ph[n, i] += 2f * Mathf.PI * roots[n] * ratios[i] * shimmer / Rate;
+                    v += Mathf.Sin(ph[n, i]) * amps[i] * Mathf.Exp(-tt * decays[i]) * attack * (n == 0 ? 1f : 0.8f);
+                }
+            }
+            float noise = (float)(rng.NextDouble() * 2.0 - 1.0);
+            lp += (noise - lp) * 0.5f;
+            hp = noise - lp;                                         // thin, airy
+            float air = hp * Mathf.Exp(-t * 5f) * 0.12f;
+            return v * 0.16f + air;
         });
     }
 
