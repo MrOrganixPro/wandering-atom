@@ -52,7 +52,6 @@ public partial class GameUI
     void BuildHudNeutrinos(VisualElement parent)
     {
         hudNeutrinoRow = Row(parent);
-        hudNeutrinoRow.style.marginTop = 6;
         hudNeutrinoRow.style.alignItems = Align.Center;
         hudNeutrinoIcon = Icon(hudNeutrinoRow, ProcSprites.Neutrino, 30, Pickup.NeutrinoColor);
         hudNeutrinoLabel = Text(hudNeutrinoRow, "", 18, true, Pickup.NeutrinoColor, TextAnchor.MiddleLeft);

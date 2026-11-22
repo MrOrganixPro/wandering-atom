@@ -46,8 +46,10 @@ public partial class GameUI
     // Layout: rings around the core and the direction each branch grows in.
     const float LabCenterY = 0.52f;
     const float LabCoreRadius = 62f;
-    static readonly float[] LabRings = { 0f, 132f, 236f, 330f };
+    static readonly float[] LabRings = { 0f, 230f, 440f, 660f };
     static readonly float[] LabBranchAngle = { 210f, 330f, 90f };   // Atom, Field, Discoveries
+    const float LabCharUpgradeRadius = 690f;   // each character's own upgrades
+    const float LabPanMargin = 90f;            // how far past the map's edge it can be dragged
     static readonly Color[] LabBranchColor =
     {
         new Color(0.38f, 0.72f, 1f),     // Atom: electron blue
@@ -59,25 +61,32 @@ public partial class GameUI
     static readonly (LabPerk perk, int tier, float offset, bool keystone, float r)[] LabLayout =
     {
         (LabPerk.Stability, 1, 0f, false, 0f),
-        (LabPerk.StartOrbital, 2, 21f, false, 0f),
-        (LabPerk.StartNeutrino, 2, -21f, false, 0f),
+        (LabPerk.StartOrbital, 2, 17f, false, 0f),
+        (LabPerk.StartNeutrino, 2, -17f, false, 0f),
         (LabPerk.SecondWind, 3, 0f, true, 0f),
         (LabPerk.Research, 1, 0f, false, 0f),
-        (LabPerk.StabilityPickup, 2, 21f, false, 0f),
-        (LabPerk.NeutrinoPickup, 2, -21f, false, 0f),
+        (LabPerk.StabilityPickup, 2, 17f, false, 0f),
+        (LabPerk.NeutrinoPickup, 2, -17f, false, 0f),
         (LabPerk.ExtraElectrons, 3, 0f, true, 0f),
-        (LabPerk.RareChance, 1, 38f, false, 0f),
-        (LabPerk.CharacterChance, 1, -12f, false, 0f),
-        (LabPerk.UnlockHydrogen, 2, 24f, true, 0f),
-        (LabPerk.UnlockArgon, 2, -12f, true, 0f),
-        (LabPerk.UnlockRadium, 2, -48f, true, 0f),
-        // Each character's two upgrades fan out above it (a little inside the outer ring: the screen ends there).
-        (LabPerk.IonQuanta, 3, 35f, false, 310f),
-        (LabPerk.IonNeutrino, 3, 13f, false, 310f),
-        (LabPerk.NobleDash, 3, -1f, false, 310f),
-        (LabPerk.NobleBlast, 3, -23f, false, 310f),
-        (LabPerk.RadiantSides, 3, -37f, false, 310f),
-        (LabPerk.RadiantWaves, 3, -59f, false, 310f),
+        (LabPerk.RareChance, 1, 40f, false, 0f),
+        (LabPerk.CharacterChance, 1, 0f, false, 0f),
+        // Seven characters fan out of Mutations, 20 degrees apart.
+        (LabPerk.UnlockHydrogen, 2, 60f, true, 0f),
+        (LabPerk.UnlockArgon, 2, 40f, true, 0f),
+        (LabPerk.UnlockRadium, 2, 20f, true, 0f),
+        (LabPerk.UnlockExcited, 2, 0f, true, 0f),
+        (LabPerk.UnlockConductive, 2, -20f, true, 0f),
+        (LabPerk.UnlockHalogen, 2, -40f, true, 0f),
+        (LabPerk.UnlockAlkali, 2, -60f, true, 0f),
+        // Each character's two upgrades fan out above it (the last three characters' spots are still empty).
+        (LabPerk.IonQuanta, 3, 65f, false, LabCharUpgradeRadius),
+        (LabPerk.IonNeutrino, 3, 55f, false, LabCharUpgradeRadius),
+        (LabPerk.NobleLinger, 3, 45f, false, LabCharUpgradeRadius),
+        (LabPerk.NobleProclaim, 3, 35f, false, LabCharUpgradeRadius),
+        (LabPerk.RadiantSides, 3, 25f, false, LabCharUpgradeRadius),
+        (LabPerk.RadiantWaves, 3, 15f, false, LabCharUpgradeRadius),
+        (LabPerk.NobleDash, 3, 5f, false, LabCharUpgradeRadius),
+        (LabPerk.NobleBlast, 3, -5f, false, LabCharUpgradeRadius),
     };
 
     // The opening animation: the core first, then each ring grows out in turn.
@@ -97,6 +106,13 @@ public partial class GameUI
     int labHover = -1;
     float labBankPop, labReveal = LabRevealEnd, labTipAlpha;
     Vector2 labC;   // the core, in canvas pixels (set every repaint)
+
+    // Dragging the map: the whole map (zones, beams, nodes, fx) sits in labWorld, moved by labPan.
+    VisualElement labWorld;
+    Vector2 labPan, labPanStart, labDragStart;
+    Rect labBounds;                 // the map's extent around the core (panel pixels)
+    bool labDragging, labDragMoved;
+    int labPressNode = -1;          // the node the press started on (researched on release, if not dragged)
 
     VisualElement chooserScreen, chooserRow;
     bool chooserOpen;
@@ -140,6 +156,8 @@ public partial class GameUI
             case LabPerk.IonNeutrino: return Loc.T("GHOST TRAIL", "HAYALET İZİ");
             case LabPerk.NobleDash: return Loc.T("ELECTRODASH", "ELEKTRO ATILIM");
             case LabPerk.NobleBlast: return Loc.T("ELECTROBLAST", "ELEKTRO PATLAMA");
+            case LabPerk.NobleLinger: return Loc.T("LINGERING NOBILITY", "KALICI SOYLULUK");
+            case LabPerk.NobleProclaim: return Loc.T("PROCLAMATION OF NOBILITY", "SOYLULUK İLANI");
             case LabPerk.RadiantSides: return Loc.T("DECAY ON ALL SIDES", "HER YÖNE BOZUNMA");
             case LabPerk.RadiantWaves: return Loc.T("DECAY WAVES", "BOZUNMA DALGALARI");
             default: return GameManager.UpgradeTitle(GameManager.CharacterCard(Lab.CharacterOf(p)));
@@ -154,7 +172,9 @@ public partial class GameUI
             case LabPerk.IonQuanta:
             case LabPerk.IonNeutrino: return GameManager.Character.Challenger;
             case LabPerk.NobleDash:
-            case LabPerk.NobleBlast: return GameManager.Character.Sluggish;
+            case LabPerk.NobleBlast: return GameManager.Character.Excited;
+            case LabPerk.NobleLinger:
+            case LabPerk.NobleProclaim: return GameManager.Character.Sluggish;
             case LabPerk.RadiantSides:
             case LabPerk.RadiantWaves: return GameManager.Character.Spaceship;
             default: return GameManager.Character.None;
@@ -179,6 +199,8 @@ public partial class GameUI
             case LabPerk.IonNeutrino: return Loc.T("Lonely Ion: a neutrino every level.", "Yalnız İyon: her seviyede bir nötrino.");
             case LabPerk.NobleDash: return Loc.T("Burn an electron: dash, untouchable. 4s.", "Bir elektron yak: dokunulmaz atıl. 4 sn.");
             case LabPerk.NobleBlast: return Loc.T("Burn an electron: a ray that vaporizes enemies. 10s.", "Bir elektron yak: düşmanları buharlaştıran ışın. 10 sn.");
+            case LabPerk.NobleLinger: return Loc.T("Noble Atom: unbreakable bonds last 5s after the full shell is lost.", "Soy Atom: tam kabuk bozulunca kırılmaz bağlar 5 sn daha sürer.");
+            case LabPerk.NobleProclaim: return Loc.T("Noble Atom: reaching a full shell sends out a huge wave that clears enemies. 10s.", "Soy Atom: tam kabuğa ulaşınca düşmanları temizleyen dev bir dalga yayar. 10 sn.");
             case LabPerk.RadiantSides: return Loc.T("Radiant: 4 emitters instead of 2.", "Işıyan: 2 yerine 4 yayıcı.");
             case LabPerk.RadiantWaves: return Loc.T("Radiant: piercing decay waves.", "Işıyan: delip geçen bozunma dalgaları.");
             default: return Loc.T("Start any run as " + PerkName(p) + ".", "Oyuna " + PerkName(p) + " olarak başla.");
@@ -203,6 +225,8 @@ public partial class GameUI
             case LabPerk.IonNeutrino: return ProcSprites.Neutrino;
             case LabPerk.NobleDash: return ProcSprites.Arrow;
             case LabPerk.NobleBlast: return ProcSprites.Gamma;
+            case LabPerk.NobleLinger: return ProcSprites.Lock;
+            case LabPerk.NobleProclaim: return ProcSprites.Ring;
             case LabPerk.RadiantSides: return ProcSprites.Trefoil;
             case LabPerk.RadiantWaves: return ProcSprites.Ring;
             default: return IconFor(GameManager.CharacterCard(Lab.CharacterOf(p)));
@@ -266,7 +290,11 @@ public partial class GameUI
         labScreen = Layer(root);
         labScreen.pickingMode = PickingMode.Position;   // blocks the screens behind it
         labScreen.style.backgroundColor = new Color(0f, 0.008f, 0.025f, 0.97f);
-        labScreen.RegisterCallback<PointerDownEvent>(_ => SkipLabReveal());
+        labScreen.style.overflow = Overflow.Hidden;
+        labScreen.RegisterCallback<PointerDownEvent>(OnLabPointerDown);
+        labScreen.RegisterCallback<PointerMoveEvent>(OnLabPointerMove);
+        labScreen.RegisterCallback<PointerUpEvent>(OnLabPointerUp);
+        labScreen.RegisterCallback<PointerLeaveEvent>(_ => { labDragging = false; labPressNode = -1; });
 
         labNodes.Clear();
         labLinks.Clear();
@@ -274,22 +302,24 @@ public partial class GameUI
         labSparks.Clear();
         labHover = -1;
 
+        labWorld = Layer(labScreen);
+
         // Soft colored zones behind each branch.
-        var zones = LabAnchor(labScreen);
+        var zones = LabAnchor(labWorld);
         for (int b = 0; b < 3; b++)
         {
-            Vector2 zc = LabPolar(b == 2 ? 205f : 235f, LabBranchAngle[b]);
-            var z = Icon(zones, ProcSprites.Glow, 560, WithAlpha(LabBranchColor[b], 0.085f));
+            Vector2 zc = LabPolar(b == 2 ? 460f : 430f, LabBranchAngle[b]);
+            var z = Icon(zones, ProcSprites.Glow, 900, WithAlpha(LabBranchColor[b], 0.085f));
             z.style.position = Position.Absolute;
-            z.style.left = zc.x - 280;
-            z.style.top = zc.y - 280;
+            z.style.left = zc.x - 450;
+            z.style.top = zc.y - 450;
         }
         var coreGlow = Icon(zones, ProcSprites.Glow, 260, WithAlpha(Lab.DataColor, 0.16f));
         coreGlow.style.position = Position.Absolute;
         coreGlow.style.left = coreGlow.style.top = -130;
 
         // Background canvas: drifting motes, orbit rings, beams, the core's orbits.
-        labCanvas = Layer(labScreen);
+        labCanvas = Layer(labWorld);
         labCanvas.generateVisualContent += DrawLabCanvas;
         var rng = new System.Random(11);
         labMotes = new LabMote[70];
@@ -306,7 +336,7 @@ public partial class GameUI
         }
 
         // Nodes and branch names, positioned around the core.
-        var map = LabAnchor(labScreen);
+        var map = LabAnchor(labWorld);
         foreach (var spec in LabLayout)
         {
             var n = new LabNode
@@ -338,9 +368,21 @@ public partial class GameUI
             foreach (LabPerk parent in parents) AddLabLink(labByPerk[(int)parent], n, 0f);
         }
 
+        // The map's extent (the drag limits): every node plus room for its label.
+        labBounds = new Rect(-LabCoreRadius, -LabCoreRadius, LabCoreRadius * 2f, LabCoreRadius * 2f);
+        foreach (var n in labNodes)
+        {
+            labBounds.xMin = Mathf.Min(labBounds.xMin, n.pos.x - 80f);
+            labBounds.xMax = Mathf.Max(labBounds.xMax, n.pos.x + 80f);
+            labBounds.yMin = Mathf.Min(labBounds.yMin, n.pos.y - 70f);
+            labBounds.yMax = Mathf.Max(labBounds.yMax, n.pos.y + 90f);
+        }
+
         for (int b = 0; b < 3; b++)
         {
-            Vector2 lp = b == 2 ? LabPolar(262f, 152f) : LabPolar(462f, b == 0 ? 201f : 339f);
+            Vector2 lp = b == 2 ? LabPolar(LabCharUpgradeRadius + 90f, 90f) : LabPolar(LabRings[3] + 110f, b == 0 ? 210f : 330f);
+            labBounds = Rect.MinMaxRect(Mathf.Min(labBounds.xMin, lp.x - 110f), Mathf.Min(labBounds.yMin, lp.y - 30f),
+                                        Mathf.Max(labBounds.xMax, lp.x + 110f), Mathf.Max(labBounds.yMax, lp.y + 30f));
             var holder = Box(map);
             holder.style.position = Position.Absolute;
             holder.style.left = lp.x - 100;
@@ -372,16 +414,18 @@ public partial class GameUI
         labBank.style.marginLeft = 6;
 
         // FX canvas above the nodes: data pulses and bursts.
-        labFx = Layer(labScreen);
+        labFx = Layer(labWorld);
         labFx.generateVisualContent += DrawLabFx;
 
-        // Top-left: the title.
+        // Top-left: the title (fixed on screen, the map moves under it).
         var head = Box(labScreen);
         head.style.position = Position.Absolute;
         head.style.left = 30;
         head.style.top = 22;
         var title = Text(head, Loc.T("THE LAB", "LABORATUVAR"), 40, true, Lab.DataColor, TextAnchor.MiddleLeft);
         title.style.letterSpacing = 8;
+        var dragHint = Text(head, Loc.T("Drag to move around", "Gezinmek için sürükle"), 14, false, Dim, TextAnchor.MiddleLeft);
+        dragHint.style.marginTop = 2;
 
         var bottom = Column(labScreen, 89f);
         Button(bottom, null, Loc.T("BACK", "GERİ"), "ESC", Dim, false, CloseLab);
@@ -473,17 +517,64 @@ public partial class GameUI
         int index = n.index;
         n.root.RegisterCallback<PointerEnterEvent>(_ =>
         {
+            if (labDragging && labDragMoved) return;   // no tips while dragging the map
             if (labHover != index && labReveal >= LabRevealEnd) Sfx.Play("lock", 0.25f);
             labHover = index;
         });
         n.root.RegisterCallback<PointerLeaveEvent>(_ => { if (labHover == index) labHover = -1; });
+        // The press bubbles on to the screen (it may become a drag); the release researches it.
         n.root.RegisterCallback<PointerDownEvent>(ev =>
         {
-            if (ev.button != 0) return;
-            if (labReveal < LabRevealEnd) { SkipLabReveal(); return; }
-            ev.StopPropagation();
-            TryResearch(n);
+            if (ev.button == 0 && labReveal >= LabRevealEnd) labPressNode = index;
         });
+    }
+
+    // ------------------------------------------------------------- dragging
+
+    void OnLabPointerDown(PointerDownEvent ev)
+    {
+        if (labReveal < LabRevealEnd) { SkipLabReveal(); labPressNode = -1; return; }
+        if (ev.button != 0) return;
+        labDragging = true;
+        labDragMoved = false;
+        labDragStart = ev.position;
+        labPanStart = labPan;
+    }
+
+    void OnLabPointerMove(PointerMoveEvent ev)
+    {
+        if (!labDragging) return;
+        Vector2 d = (Vector2)ev.position - labDragStart;
+        if (!labDragMoved && d.sqrMagnitude < 6f * 6f) return;   // a small wobble is still a click
+        labDragMoved = true;
+        labHover = -1;
+        labPan = ClampLabPan(labPanStart + d);
+    }
+
+    void OnLabPointerUp(PointerUpEvent ev)
+    {
+        if (ev.button != 0) return;
+        bool click = labDragging && !labDragMoved;
+        int press = labPressNode;
+        labDragging = false;
+        labPressNode = -1;
+        if (click && press >= 0 && press < labNodes.Count) TryResearch(labNodes[press]);
+    }
+
+    /// <summary>Keeps the map on screen: it can't be dragged further than its edge (plus a margin).</summary>
+    Vector2 ClampLabPan(Vector2 pan)
+    {
+        float W = labScreen.layout.width, H = labScreen.layout.height;
+        if (float.IsNaN(W) || W <= 0f) return Vector2.zero;
+        return new Vector2(ClampLabAxis(pan.x, W * 0.5f, W, labBounds.xMin, labBounds.xMax),
+                           ClampLabAxis(pan.y, H * LabCenterY, H, labBounds.yMin, labBounds.yMax));
+    }
+
+    static float ClampLabAxis(float pan, float core, float size, float min, float max)
+    {
+        float lo = size - LabPanMargin - core - max;   // the far edge reaches the screen's edge
+        float hi = LabPanMargin - core - min;          // the near edge reaches the screen's edge
+        return lo > hi ? (lo + hi) * 0.5f : Mathf.Clamp(pan, lo, hi);
     }
 
     void BuildLabTip()
@@ -511,8 +602,8 @@ public partial class GameUI
 
     void TryResearch(LabNode n)
     {
-        // A researched Noble Atom ability: clicking it makes it the one the atom brings.
-        if (Lab.IsNobleAbility(n.perk) && Lab.Has(n.perk))
+        // A researched Excited Atom ability: clicking it makes it the one the atom brings.
+        if (Lab.IsExcitedAbility(n.perk) && Lab.Has(n.perk))
         {
             if (Lab.Equip(n.perk))
             {
@@ -525,7 +616,7 @@ public partial class GameUI
         }
         if (Lab.Buy(n.perk))
         {
-            if (Lab.IsNobleAbility(n.perk)) Lab.Equip(n.perk);   // a fresh ability is equipped right away
+            if (Lab.IsExcitedAbility(n.perk)) Lab.Equip(n.perk);   // a fresh ability is equipped right away
             labBankPop = 1f;
             Sfx.Play("orb", 0.55f);
             labPulses.Add(new LabPulse { path = LabPathTo(n), target = n });
@@ -614,6 +705,9 @@ public partial class GameUI
         labHover = -1;
         labReveal = 0f;
         labTipAlpha = 0f;
+        labDragging = false;
+        labPressNode = -1;
+        labPan = new Vector2(0f, 200f);   // opens with the core low, so the characters show
         SyncLab();
         Sfx.Play("orb", 0.5f);
     }
@@ -649,6 +743,8 @@ public partial class GameUI
 
         float dt = Time.unscaledDeltaTime, ut = Time.unscaledTime;
         labReveal = Mathf.Min(LabRevealEnd, labReveal + dt);
+        labPan = ClampLabPan(labPan);   // also when the window is resized
+        labWorld.style.translate = new Translate(labPan.x, labPan.y);
 
         // Bank and overall progress.
         labBankPop = Mathf.MoveTowards(labBankPop, 0f, dt / 0.35f);
@@ -772,8 +868,8 @@ public partial class GameUI
             iconAlpha = 0.7f;
             glowAlpha = can ? 0.1f + 0.18f * pulse : 0f;
         }
-        // The Noble Atom brings one ability: the researched one that isn't equipped is dimmed.
-        bool benched = Lab.IsNobleAbility(n.perk) && lvl > 0 && Lab.NobleAbility != n.perk;
+        // The Excited Atom brings one ability: the researched one that isn't equipped is dimmed.
+        bool benched = Lab.IsExcitedAbility(n.perk) && lvl > 0 && Lab.ExcitedAbility != n.perk;
         if (benched)
         {
             border = WithAlpha(c, 0.35f);
@@ -842,9 +938,9 @@ public partial class GameUI
 
         string status;
         Color sc = Lab.DataColor;
-        if (lvl >= max && Lab.IsNobleAbility(p))
+        if (lvl >= max && Lab.IsExcitedAbility(p))
         {
-            bool equipped = Lab.NobleAbility == p;
+            bool equipped = Lab.ExcitedAbility == p;
             status = equipped ? Loc.T("EQUIPPED", "TAKILI") : Loc.T("CLICK TO EQUIP", "TAKMAK İÇİN TIKLA");
             sc = equipped ? c : Dim;
         }
@@ -874,7 +970,7 @@ public partial class GameUI
         float w = 300f;
         float h = labTip.layout.height;
         if (float.IsNaN(h) || h <= 0f) h = 150f;
-        float cx = W * 0.5f + n.pos.x, cy = H * LabCenterY + n.pos.y;
+        float cx = W * 0.5f + labPan.x + n.pos.x, cy = H * LabCenterY + labPan.y + n.pos.y;
         float gap = n.size * 0.5f + (n.keystone ? 22f : 16f);
         bool right = n.pos.x > 0f || (Mathf.Abs(n.pos.x) < 1f);
         float x = right ? cx + gap : cx - gap - w;
@@ -898,13 +994,14 @@ public partial class GameUI
         float ut = Time.unscaledTime;
         float fade = Mathf.Clamp01(labReveal / 0.4f);
 
-        // Drifting motes.
+        // Drifting motes: they fill the screen wherever the map is, moving slower than it (depth).
         for (int i = 0; i < labMotes.Length; i++)
         {
             LabMote m = labMotes[i];
             float tw = 0.5f + 0.5f * Mathf.Sin(ut * 1.3f + m.phase);
-            FillCircle(p, new Vector2(m.pos.x * r.width, m.pos.y * r.height), m.size,
-                       new Color(0.7f, 0.9f, 1f, (0.08f + 0.22f * tw) * fade));
+            Vector2 sp = new Vector2(Mathf.Repeat(m.pos.x * r.width + labPan.x * 0.35f, r.width),
+                                     Mathf.Repeat(m.pos.y * r.height + labPan.y * 0.35f, r.height));
+            FillCircle(p, sp - labPan, m.size, new Color(0.7f, 0.9f, 1f, (0.08f + 0.22f * tw) * fade));
         }
 
         // Orbit rings (depth tiers).
@@ -1067,6 +1164,8 @@ public partial class GameUI
         chooserRow = Row(col);
         chooserRow.style.marginTop = 30;
         chooserRow.style.justifyContent = Justify.Center;
+        chooserRow.style.flexWrap = Wrap.Wrap;   // up to seven cards
+        chooserRow.style.maxWidth = 1100;
         var bottom = Column(chooserScreen, 80f);
         Button(bottom, null, Loc.T("BACK", "GERİ"), "ESC", Dim, false, HideChooser);
         Show(chooserScreen, false);
@@ -1079,7 +1178,7 @@ public partial class GameUI
         chooserOpenedFrame = Time.frameCount;   // the key that opened it must not also pick
         chooserRow.Clear();
         AddChooserCard(GameManager.Character.None);
-        foreach (GameManager.Character c in new[] { GameManager.Character.Challenger, GameManager.Character.Sluggish, GameManager.Character.Spaceship })
+        foreach (GameManager.Character c in Lab.Characters)
             if (Lab.CharacterUnlocked(c)) AddChooserCard(c);
         Sfx.Play("orb", 0.5f);
     }
@@ -1095,9 +1194,10 @@ public partial class GameUI
         GameManager.UpgradeType card = GameManager.CharacterCard(c);
         Color col = normal ? Pickup.OrbColor : GameManager.UpgradeColor(card);
         var e = new VisualElement { pickingMode = PickingMode.Position };
-        e.style.width = 200;
-        e.style.height = 230;
+        e.style.width = 190;
+        e.style.height = 220;
         e.style.marginLeft = e.style.marginRight = 10;
+        e.style.marginTop = e.style.marginBottom = 8;
         e.style.alignItems = Align.Center;
         e.style.justifyContent = Justify.Center;
         e.style.backgroundColor = WithAlpha(Panel, 0.9f);

@@ -72,8 +72,11 @@ public class DecayWave : MonoBehaviour
     void CheckHits()
     {
         float baseAngle = Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg;
-        foreach (var e in EnemyMover.All)
+        // By index, from the end: a hit can change the enemy list while this runs.
+        for (int i = EnemyMover.All.Count - 1; i >= 0; i--)
         {
+            if (i >= EnemyMover.All.Count) continue;
+            var e = EnemyMover.All[i];
             if (e == null || e.IsDead || hit.Contains(e)) continue;
             Vector2 rel = e.Position - origin;
             float d = rel.magnitude;

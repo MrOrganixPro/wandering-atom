@@ -60,7 +60,14 @@ public partial class GameManager : MonoBehaviour
         FireRate, TurretRange,     // normal, only with the Spaceship
         Insight, CoinRecycler, HealthRecycler,  // rare
         Conductive,                             // character
-        HopRange, HopCount, ChargeRate          // normal, only with the Conductive
+        HopRange, HopCount, ChargeRate,         // normal, only with the Conductive
+        Halogen,                                // character
+        HalogenPull, HalogenGrasp, HalogenSnatch,  // normal, only with the Halogen
+        Alkali,                                 // character
+        AlkaliBlast, AlkaliRange, AlkaliPath,   // normal, only with the Alkali Metal
+        Excited,                                // character
+        AngularMomentum, GroundState,           // normal (Extras)
+        Photoelectric, Resonance                // rare
     }
 
     /// <summary>
@@ -71,7 +78,7 @@ public partial class GameManager : MonoBehaviour
     public enum UpgradeTier { Normal, Rare, Character }
 
     /// <summary>The run's Character (at most one per run). Values are saved, so only append.</summary>
-    public enum Character { None = 0, Challenger = 1, Sluggish = 2, Spaceship = 3, Conductive = 4 }
+    public enum Character { None = 0, Challenger = 1, Sluggish = 2, Spaceship = 3, Conductive = 4, Halogen = 5, Alkali = 6, Excited = 7 }
 
     [Header("Rules")]
     [Tooltip("Base max health (before upgrades).")]
@@ -153,8 +160,19 @@ public partial class GameManager : MonoBehaviour
     public int levelsPerBallArmor = 4;
 
     [Tooltip("Bigger Balls: ball size +this fraction per upgrade.")]
-    public float ballSizePerUpgrade = 0.25f;
-    public int maxBallSizeUpgrades = 4;
+    public float ballSizePerUpgrade = 0.35f;
+    [Header("Angular Momentum / Ground State (normal)")]
+    [Tooltip("Angular Momentum: orbit speed added per level (0.4 = +40%).")]
+    public float spinPerUpgrade = 0.4f;
+    public int maxSpinUpgrades = 3;
+    [Tooltip("Ground State: every energy level is this much closer per level (0.1 = 10%).")]
+    public float groundStatePerUpgrade = 0.1f;
+    public int maxGroundStateUpgrades = 3;
+    [Header("Photoelectric Effect / Resonance (rare)")]
+    [Tooltip("Photoelectric Effect: electrons knocked loose by every photon collected.")]
+    public int photoelectricElectrons = 2;
+    public float photoelectricMinDistance = 2f, photoelectricMaxDistance = 3.2f;
+    public int maxBallSizeUpgrades = 3;
     [Tooltip("Pickup Range: extra reach (world units) for the thruster and every ball, per upgrade.")]
     public float pickupRangePerUpgrade = 0.6f;
     public int maxPickupRangeUpgrades = 3;
@@ -178,10 +196,6 @@ public partial class GameManager : MonoBehaviour
     public float shellLengthStep = 0.62f;
     [Tooltip("Quanta per level gained (for the rest of the run) for every energy level filled with electrons.")]
     public int coinsPerExtraShell = 1;
-    [Tooltip("Chance New Orbital is among the possible cards while the atom has one shell.")]
-    [Range(0f, 1f)] public float orbitalOfferChance = 0.8f;
-    [Tooltip("The chance is divided by (1 + this x each extra shell): bigger atoms see it less.")]
-    public float orbitalOfferFalloff = 0.45f;
 
     [Header("Upgrade screen (each quantum flies to the center, spins up and opens)")]
     public float upgradeFlyTime = 0.6f;
@@ -211,11 +225,10 @@ public partial class GameManager : MonoBehaviour
     public int ionNeutrinosPerLevel = 1;
     [Tooltip("Lonely Ion: neutrino and stability pickup chances are multiplied by this.")]
     public float ionFindMultiplier = 2f;
-    [Tooltip("Sluggish: rope lengths are multiplied by this.")]
-    public float sluggishTighten = 0.78f;
     public int sluggishMaxBallArmor = 4;
-    [Tooltip("Sluggish: orbs per level are multiplied by this.")]
-    public int sluggishOrbMultiplier = 2;
+    [Tooltip("Excited Atom: orbs per level are multiplied by this.")]
+    [FormerlySerializedAs("sluggishOrbMultiplier")]
+    public int excitedOrbMultiplier = 2;
     [Tooltip("Spaceship: Fire Rate upgrade, +this fraction of shots per second each.")]
     public float fireRatePerUpgrade = 0.25f;
     public int maxFireRateUpgrades = 5;
@@ -256,13 +269,14 @@ public partial class GameManager : MonoBehaviour
     int upgBallSize, upgPickupRange, upgRepel, upgBooster, upgRegen;
     int upgFireRate, upgTurretRange;
     int upgInsight, upgCoinRecycler, upgHealthRecycler;   // rare, once per run
+    int upgSpin, upgGroundState;                          // normal
+    int upgPhotoelectric, upgResonance;                   // rare, once per run
     int coinRecycleProgress, heartRecycleProgress;        // orbs recycled toward the next coin / heart
     int levelCoins, pendingChoices, choiceIndex, choiceTotal, refundTotal, offerVersion;
     readonly List<UpgradeType> offer = new List<UpgradeType>();
     Character character = Character.None;
     int appliedLayout = -1;
     int pickNumber;          // picks made so far this round (each plays faster)
-    bool orbitalPickedThisRound;   // New Orbital can be taken at most once per round
 
     // The Lab: what this run is worth (paid out when it ends) and its once-per-run perks.
     int runMaxElectrons;           // highest atomic number reached with real electrons
@@ -278,6 +292,28 @@ public partial class GameManager : MonoBehaviour
 
     // Energy levels: filling a shell with electrons gives +1 quantum per level from the next level.
     const string ShellLessonKey = "Pendulum_ShellLessonSeen";
+    const string NobleLessonKey = "Pendulum_NobleLessonSeen";
+    const string GuideKey = "Pendulum_GuideSeen";
+
+    /// <summary>
+    /// The first-run guide (GameUI.Guide): photon, then electron, then quantum, each pointed at
+    /// until one is collected. Marked as seen only once all three are done.
+    /// </summary>
+    public enum GuideStep { None, Photon, Electron, Quantum }
+    GuideStep guide;
+    Pickup guideTarget;
+    public GuideStep Guide => guide;
+    public Pickup GuideTarget => guide != GuideStep.None && guideTarget != null ? guideTarget : null;
+    const string HalogenLessonKey = "Pendulum_HalogenLessonSeen";
+    const string AlkaliLessonKey = "Pendulum_AlkaliLessonSeen";
+
+    /// <summary>The one-time lessons (the game freezes and the lines fade in one by one).</summary>
+    public enum LessonKind { Shell, Noble, Halogen, Alkali }
+    public LessonKind TeachingKind { get; private set; }
+    /// <summary>Goes up with every lesson shown (the UI rebuilds its lines when it changes).</summary>
+    public int LessonVersion { get; private set; }
+    readonly Queue<LessonKind> lessonQueue = new Queue<LessonKind>();
+    int teachEndFrame = -1;
     int shellsFilled;              // this run
     int pendingNewQuanta;          // earned this level, placed from the next one
     int levelQuanta, newQuanta;    // this level
@@ -328,7 +364,12 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.Challenger:
             case UpgradeType.Sluggish:
             case UpgradeType.Spaceship:
-            case UpgradeType.Conductive: return UpgradeTier.Character;
+            case UpgradeType.Conductive:
+            case UpgradeType.Halogen:
+            case UpgradeType.Alkali:
+            case UpgradeType.Excited: return UpgradeTier.Character;
+            case UpgradeType.Photoelectric:
+            case UpgradeType.Resonance: return UpgradeTier.Rare;
             case UpgradeType.Regeneration:
             case UpgradeType.Insight:
             case UpgradeType.CoinRecycler:
@@ -342,7 +383,10 @@ public partial class GameManager : MonoBehaviour
     public static UpgradeType CharacterCard(Character c) =>
         c == Character.Challenger ? UpgradeType.Challenger
         : c == Character.Sluggish ? UpgradeType.Sluggish
-        : c == Character.Conductive ? UpgradeType.Conductive : UpgradeType.Spaceship;
+        : c == Character.Conductive ? UpgradeType.Conductive
+        : c == Character.Halogen ? UpgradeType.Halogen
+        : c == Character.Alkali ? UpgradeType.Alkali
+        : c == Character.Excited ? UpgradeType.Excited : UpgradeType.Spaceship;
 
     // ------------------------------------------------------------- orbitals
 
@@ -372,9 +416,6 @@ public partial class GameManager : MonoBehaviour
     }
 
 
-    /// <summary>Chance New Orbital is a candidate card: lower the more shells the atom has.</summary>
-    float OrbitalOfferChance =>
-        orbitalOfferChance / (1f + orbitalOfferFalloff * Mathf.Max(0, ShellsFor(upgOrbitals) - 1));
 
     float[] ShellLengthsFor(int count)
     {
@@ -562,7 +603,6 @@ public partial class GameManager : MonoBehaviour
 
     void ResetUpgrades()
     {
-        lastPickWasExtra = false;
         neutrinos = Lab.Level(LabPerk.StartNeutrino);   // Lab: start with neutrinos
         runMaxElectrons = 0;
         runPaid = 0;
@@ -572,6 +612,7 @@ public partial class GameManager : MonoBehaviour
         upgBallSize = upgPickupRange = upgRepel = upgBooster = upgRegen = 0;
         upgFireRate = upgTurretRange = 0;
         upgInsight = upgCoinRecycler = upgHealthRecycler = 0;
+        upgSpin = upgGroundState = upgPhotoelectric = upgResonance = 0;
         coinRecycleProgress = heartRecycleProgress = 0;
         ResetTraits();
         character = Character.None;
@@ -585,12 +626,15 @@ public partial class GameManager : MonoBehaviour
 
         // New Orbitals grow the shells; Characters reshape them.
         bool allSides = character == Character.Spaceship && Lab.Has(LabPerk.RadiantSides);
-        int layoutKey = (int)character + 16 * upgOrbitals + (allSides ? 1 << 20 : 0);
+        int layoutKey = (int)character + 16 * upgOrbitals + (allSides ? 1 << 20 : 0) + (upgGroundState << 24);
         if (appliedLayout != layoutKey)
         {
             appliedLayout = layoutKey;
             int[] caps = ShellLayoutFor(upgOrbitals);
             float[] lens = ShellLengthsFor(caps.Length);
+            // Ground State: every energy level sits closer to the core.
+            float closer = Mathf.Max(0.3f, 1f - upgGroundState * groundStatePerUpgrade);
+            for (int i = 0; i < lens.Length; i++) lens[i] *= closer;
             // Radiant: the inner orbital's slots become emitters (its balls convert first).
             // Lab Decay on All Sides: that first energy level holds 4 of them instead of 2.
             int emitters = character == Character.Spaceship && caps.Length > 0 ? (allSides ? 4 : caps[0]) : 0;
@@ -607,12 +651,6 @@ public partial class GameManager : MonoBehaviour
             else if (character == Character.Challenger)
             {
                 pendulum.SetShellLayout(new int[0], new float[0]);          // no balls at all
-            }
-            else if (character == Character.Sluggish)
-            {
-                var newLens = new float[lens.Length];
-                for (int i = 0; i < lens.Length; i++) newLens[i] = lens[i] * sluggishTighten;   // tighter orbitals
-                pendulum.SetShellLayout(caps, newLens);
             }
             else
             {
@@ -631,6 +669,7 @@ public partial class GameManager : MonoBehaviour
             upgPickupRange * pickupRangePerUpgrade,
             upgRepel,
             upgBooster);
+        pendulum.SetSpinMultiplier(1f + upgSpin * spinPerUpgrade);   // Angular Momentum
         pendulum.ApplyTurretUpgrades(
             1f + upgFireRate * fireRatePerUpgrade,
             upgTurretRange * turretRangePerUpgrade,
@@ -644,7 +683,6 @@ public partial class GameManager : MonoBehaviour
         refundTotal = 0;
         choiceIndex = 0;
         pickNumber = 0;
-        orbitalPickedThisRound = false;
         upgradeFinishing = false;
         levelCoins = 0;
         RollOffer();
@@ -661,7 +699,6 @@ public partial class GameManager : MonoBehaviour
         || u == UpgradeType.Torque || u == UpgradeType.Orbital;
     public static bool IsExtra(UpgradeType u) => TierOf(u) == UpgradeTier.Normal && !IsEssential(u);
 
-    bool lastPickWasExtra;   // the next offer then holds at most one Extra
 
     /// <summary>Every normal upgrade that may be offered right now: Essentials and Extras.</summary>
     void OfferCandidates(out List<UpgradeType> essentials, out List<UpgradeType> extras)
@@ -669,9 +706,8 @@ public partial class GameManager : MonoBehaviour
         essentials = new List<UpgradeType> { UpgradeType.MaxHealth };
         essentials.Add(UpgradeType.Speed);
         essentials.Add(UpgradeType.Torque);
-        // New Orbital: never for the ion (it holds no electrons), once per round, rarer as the atom grows.
-        if (character != Character.Challenger && !orbitalPickedThisRound && Random.value < OrbitalOfferChance)
-            essentials.Add(UpgradeType.Orbital);
+        // New Orbital: never for the ion (it holds no electrons).
+        if (character != Character.Challenger) essentials.Add(UpgradeType.Orbital);
         if (lives <= MaxHealth - 2) essentials.Add(UpgradeType.Heal);   // only when down at least two hearts
 
         // Extras.
@@ -682,6 +718,8 @@ public partial class GameManager : MonoBehaviour
         if (upgPickupRange < maxPickupRangeUpgrades) extras.Add(UpgradeType.PickupRange);
         if (upgRepel < maxRepelUpgrades) extras.Add(UpgradeType.Repel);
         if (upgBooster < maxBoosterUpgrades) extras.Add(UpgradeType.Booster);
+        if (character != Character.Challenger && upgSpin < maxSpinUpgrades) extras.Add(UpgradeType.AngularMomentum);
+        if (character != Character.Challenger && upgGroundState < maxGroundStateUpgrades) extras.Add(UpgradeType.GroundState);
         if (character == Character.Spaceship)
         {
             if (upgFireRate < maxFireRateUpgrades) extras.Add(UpgradeType.FireRate);
@@ -692,6 +730,18 @@ public partial class GameManager : MonoBehaviour
             if (upgHopRange < maxConductUpgrades) extras.Add(UpgradeType.HopRange);
             if (upgHopCount < maxConductUpgrades) extras.Add(UpgradeType.HopCount);
             if (upgChargeRate < maxConductUpgrades) extras.Add(UpgradeType.ChargeRate);
+        }
+        if (character == Character.Halogen)
+        {
+            if (upgHalogenPull < maxHalogenUpgrades) extras.Add(UpgradeType.HalogenPull);
+            if (upgHalogenGrasp < maxHalogenUpgrades) extras.Add(UpgradeType.HalogenGrasp);
+            if (upgHalogenSnatch < maxHalogenUpgrades) extras.Add(UpgradeType.HalogenSnatch);
+        }
+        if (character == Character.Alkali)
+        {
+            if (upgAlkaliBlast < maxAlkaliUpgrades) extras.Add(UpgradeType.AlkaliBlast);
+            if (upgAlkaliRange < maxAlkaliUpgrades) extras.Add(UpgradeType.AlkaliRange);
+            if (upgAlkaliPath < maxAlkaliUpgrades) extras.Add(UpgradeType.AlkaliPath);
         }
     }
 
@@ -708,17 +758,14 @@ public partial class GameManager : MonoBehaviour
             offer.Add(essentials[k]);
             essentials.RemoveAt(k);
         }
-        // Fill the rest from both groups; right after an Extra was picked, at most one Extra.
-        int extraLimit = lastPickWasExtra ? 1 : int.MaxValue;
-        int extraCount = 0;
+        // Fill the rest from both groups (what was just picked is not held back).
         while (offer.Count < upgradeChoices)
         {
-            bool extrasAllowed = extraCount < extraLimit && extras.Count > 0;
-            int total = essentials.Count + (extrasAllowed ? extras.Count : 0);
+            int total = essentials.Count + extras.Count;
             if (total == 0) break;
             int k = Random.Range(0, total);
             if (k < essentials.Count) { offer.Add(essentials[k]); essentials.RemoveAt(k); }
-            else { k -= essentials.Count; offer.Add(extras[k]); extras.RemoveAt(k); extraCount++; }
+            else { k -= essentials.Count; offer.Add(extras[k]); extras.RemoveAt(k); }
         }
         // Shuffle so the guaranteed Essential isn't always the first card.
         for (int i = offer.Count - 1; i > 0; i--)
@@ -734,7 +781,8 @@ public partial class GameManager : MonoBehaviour
                         && choiceIndex == 0 && pendingChoices >= 2 && choiceTotal >= levelQuanta;
         if (eligible && Random.value < characterChance + Lab.CharacterChancePerLevel * Lab.Level(LabPerk.CharacterChance))
         {
-            UpgradeType[] characters = { UpgradeType.Challenger, UpgradeType.Sluggish, UpgradeType.Spaceship, UpgradeType.Conductive };
+            UpgradeType[] characters = { UpgradeType.Challenger, UpgradeType.Sluggish, UpgradeType.Spaceship, UpgradeType.Conductive,
+                                     UpgradeType.Halogen, UpgradeType.Alkali, UpgradeType.Excited };
             UpgradeType gc = characters[Random.Range(0, characters.Length)];
             if (offer.Count >= upgradeChoices)
             {
@@ -750,6 +798,8 @@ public partial class GameManager : MonoBehaviour
         if (upgInsight == 0) rares.Add(UpgradeType.Insight);
         if (upgCoinRecycler == 0) rares.Add(UpgradeType.CoinRecycler);
         if (upgHealthRecycler == 0) rares.Add(UpgradeType.HealthRecycler);
+        if (upgPhotoelectric == 0 && character != Character.Challenger) rares.Add(UpgradeType.Photoelectric);
+        if (upgResonance == 0 && character != Character.Challenger) rares.Add(UpgradeType.Resonance);
         if (rares.Count > 0 && level >= rareUnlockLevel && Random.value < rareChance + Lab.RareChancePerLevel * Lab.Level(LabPerk.RareChance))
         {
             UpgradeType rare = rares[Random.Range(0, rares.Count)];
@@ -813,14 +863,13 @@ public partial class GameManager : MonoBehaviour
 
         UpgradeType picked = offer[index];
         int cost = IsCharacter(picked) ? 2 : 1;
-        lastPickWasExtra = IsExtra(picked);
         switch (picked)
         {
             case UpgradeType.Heal: lives = MaxHealth; break;
             case UpgradeType.MaxHealth: upgMaxHealth++; lives++; break;
             case UpgradeType.Speed: upgSpeed++; break;
             case UpgradeType.Torque: upgTorque++; break;
-            case UpgradeType.Orbital: upgOrbitals++; orbitalPickedThisRound = true; break;
+            case UpgradeType.Orbital: upgOrbitals++; break;
             case UpgradeType.BallArmor: upgBallArmor = Mathf.Min(BallArmorCap, upgBallArmor + 1); break;
             case UpgradeType.BallSize: upgBallSize = Mathf.Min(maxBallSizeUpgrades, upgBallSize + 1); break;
             case UpgradeType.PickupRange: upgPickupRange = Mathf.Min(maxPickupRangeUpgrades, upgPickupRange + 1); break;
@@ -830,6 +879,10 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.Insight: upgInsight = 1; break;
             case UpgradeType.CoinRecycler: upgCoinRecycler = 1; break;
             case UpgradeType.HealthRecycler: upgHealthRecycler = 1; break;
+            case UpgradeType.AngularMomentum: upgSpin = Mathf.Min(maxSpinUpgrades, upgSpin + 1); break;
+            case UpgradeType.GroundState: upgGroundState = Mathf.Min(maxGroundStateUpgrades, upgGroundState + 1); break;
+            case UpgradeType.Photoelectric: upgPhotoelectric = 1; break;
+            case UpgradeType.Resonance: upgResonance = 1; break;
             case UpgradeType.FireRate: upgFireRate = Mathf.Min(maxFireRateUpgrades, upgFireRate + 1); break;
             case UpgradeType.TurretRange: upgTurretRange = Mathf.Min(maxTurretRangeUpgrades, upgTurretRange + 1); break;
             case UpgradeType.Spaceship: character = Character.Spaceship; break;
@@ -860,6 +913,15 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.HopRange: upgHopRange = Mathf.Min(maxConductUpgrades, upgHopRange + 1); break;
             case UpgradeType.HopCount: upgHopCount = Mathf.Min(maxConductUpgrades, upgHopCount + 1); break;
             case UpgradeType.ChargeRate: upgChargeRate = Mathf.Min(maxConductUpgrades, upgChargeRate + 1); break;
+            case UpgradeType.Halogen: character = Character.Halogen; break;
+            case UpgradeType.HalogenPull: upgHalogenPull = Mathf.Min(maxHalogenUpgrades, upgHalogenPull + 1); break;
+            case UpgradeType.HalogenGrasp: upgHalogenGrasp = Mathf.Min(maxHalogenUpgrades, upgHalogenGrasp + 1); break;
+            case UpgradeType.HalogenSnatch: upgHalogenSnatch = Mathf.Min(maxHalogenUpgrades, upgHalogenSnatch + 1); break;
+            case UpgradeType.Alkali: character = Character.Alkali; break;
+            case UpgradeType.Excited: character = Character.Excited; break;
+            case UpgradeType.AlkaliBlast: upgAlkaliBlast = Mathf.Min(maxAlkaliUpgrades, upgAlkaliBlast + 1); break;
+            case UpgradeType.AlkaliRange: upgAlkaliRange = Mathf.Min(maxAlkaliUpgrades, upgAlkaliRange + 1); break;
+            case UpgradeType.AlkaliPath: upgAlkaliPath = Mathf.Min(maxAlkaliUpgrades, upgAlkaliPath + 1); break;
         }
         ApplyUpgrades();
         Sfx.Play(IsCharacter(picked) ? "level" : "orb");
@@ -891,6 +953,19 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.HopRange: return Loc.T("ZAP RANGE", "ŞOK MENZİLİ");
             case UpgradeType.HopCount: return Loc.T("ZAP HOPS", "ŞOK SEKMESİ");
             case UpgradeType.ChargeRate: return Loc.T("FAST CHARGE", "HIZLI YÜKLEME");
+            case UpgradeType.Halogen: return Loc.T("HALOGEN", "HALOJEN");
+            case UpgradeType.HalogenPull: return Loc.T("STRONGER PULL", "GÜÇLÜ ÇEKİM");
+            case UpgradeType.HalogenGrasp: return Loc.T("WIDER GRASP", "GENİŞ KAVRAYIŞ");
+            case UpgradeType.HalogenSnatch: return Loc.T("RADICAL SNATCH", "RADİKAL KAPMA");
+            case UpgradeType.Alkali: return Loc.T("ALKALI METAL", "ALKALİ METAL");
+            case UpgradeType.Excited: return Loc.T("EXCITED ATOM", "UYARILMIŞ ATOM");
+            case UpgradeType.AngularMomentum: return Loc.T("ANGULAR MOMENTUM", "AÇISAL MOMENTUM");
+            case UpgradeType.GroundState: return Loc.T("GROUND STATE", "TEMEL HAL");
+            case UpgradeType.Photoelectric: return Loc.T("PHOTOELECTRIC EFFECT", "FOTOELEKTRİK ETKİ");
+            case UpgradeType.Resonance: return Loc.T("RESONANCE", "REZONANS");
+            case UpgradeType.AlkaliBlast: return Loc.T("BIGGER BLAST", "BÜYÜK PATLAMA");
+            case UpgradeType.AlkaliRange: return Loc.T("LONGER THROW", "UZUN ATIŞ");
+            case UpgradeType.AlkaliPath: return Loc.T("WIDER PATH", "GENİŞ YOL");
             case UpgradeType.BallSize: return Loc.T("BIGGER ELECTRONS", "BÜYÜK ELEKTRONLAR");
             case UpgradeType.PickupRange: return Loc.T("PICKUP RANGE", "TOPLAMA MENZİLİ");
             case UpgradeType.Repel: return Loc.T("REPEL", "İTME");
@@ -905,11 +980,19 @@ public partial class GameManager : MonoBehaviour
         }
     }
 
-    string NobleText() =>
-        Loc.T("Tighter orbitals\n2\u00d7 electrons per level\nElectron Binding up to " + sluggishMaxBallArmor,
-              "Daha sıkı orbitaller\nSeviye başına 2\u00d7 elektron\nElektron Bağı en fazla " + sluggishMaxBallArmor)
-        + (Lab.NobleAbility == LabPerk.NobleDash ? Loc.T("\nAbility: Electrodash", "\nYetenek: Elektro Atılım")
-           : Lab.NobleAbility == LabPerk.NobleBlast ? Loc.T("\nAbility: Electroblast", "\nYetenek: Elektro Patlama") : "");
+    string NobleText(bool full) =>
+        Loc.T("Full shell (2, 10, 18, 36\u2026):\nunbreakable bonds\nElectron Binding up to " + sluggishMaxBallArmor,
+              "Tam kabuk (2, 10, 18, 36\u2026):\nkırılmaz bağlar\nElektron Bağı en fazla " + sluggishMaxBallArmor)
+        + (full ? Loc.T("\nIonizing hits and dust can't take electrons; positrons and black holes still can",
+                        "\nİyonlaştırıcı darbeler ve toz elektron alamaz; pozitronlar ve kara delikler hâlâ alır") : "")
+        + (Lab.Has(LabPerk.NobleLinger) ? Loc.T("\nLingers " + nobleLingerTime.ToString("0") + " s", "\n" + nobleLingerTime.ToString("0") + " sn sürer") : "")
+        + (Lab.Has(LabPerk.NobleProclaim) ? Loc.T("\nProclamation wave", "\nİlan dalgası") : "");
+
+    string ExcitedText() =>
+        Loc.T(excitedOrbMultiplier + "\u00d7 electrons per level", "Seviye başına " + excitedOrbMultiplier + "\u00d7 elektron")
+        + (Lab.ExcitedAbility == LabPerk.NobleDash ? Loc.T("\nAbility: Electrodash", "\nYetenek: Elektro Atılım")
+           : Lab.ExcitedAbility == LabPerk.NobleBlast ? Loc.T("\nAbility: Electroblast", "\nYetenek: Elektro Patlama")
+           : Loc.T("\nAbilities: research in the Lab", "\nYetenekler: Laboratuvarda araştır"));
 
     /// <summary>The Lonely Ion's text; the card keeps it short, the Index lists everything.</summary>
     string HydrogenText(string last, bool full) =>
@@ -934,7 +1017,18 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.Torque: return Loc.T("Sharper turns\nand braking", "Daha keskin dönüşler,\ndaha sert fren");
             case UpgradeType.Challenger:
                 return HydrogenText(Loc.T("+" + ChallengerRefunds + " picks now", "Hemen +" + ChallengerRefunds + " seçim hakkı"), false);
-            case UpgradeType.Sluggish: return NobleText();
+            case UpgradeType.Sluggish: return NobleText(false);
+            case UpgradeType.Excited: return ExcitedText();
+            case UpgradeType.AngularMomentum:
+                return Loc.Pct(spinPerUpgrade) + Loc.T(" orbit speed\nElectrons sweep harder", " yörünge hızı\nElektronlar daha sert süpürür");
+            case UpgradeType.GroundState:
+                return Loc.T("Every energy level\n" + Mathf.RoundToInt(groundStatePerUpgrade * 100f) + "% closer to the core",
+                             "Tüm enerji seviyeleri\nçekirdeğe %" + Mathf.RoundToInt(groundStatePerUpgrade * 100f) + " daha yakın");
+            case UpgradeType.Photoelectric:
+                return Loc.T("Every photon knocks\n" + photoelectricElectrons + " electrons loose nearby",
+                             "Her foton yakınına\n" + photoelectricElectrons + " elektron saçar");
+            case UpgradeType.Resonance:
+                return Loc.T("Completing an energy level\nfills your stability", "Bir enerji seviyesini\ntamamlamak kararlılığı doldurur");
             case UpgradeType.Spaceship:
             {
                 int emitters = Lab.Has(LabPerk.RadiantSides) ? 4 : 2;
@@ -970,6 +1064,21 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.HopCount: return Loc.T("+1 zap hop", "+1 şok sekmesi");
             case UpgradeType.ChargeRate:
                 return "−" + conductTickPerUpgrade.ToString("0.#") + Loc.T(" s per charge", " sn yükleme süresi");
+            case UpgradeType.Halogen:
+                return Loc.T("At 9, 17, 35, 53\u2026 electrons:\nElectrons drift to you\n2\u00d7 electron reach\nTouching radicals lose theirs",
+                             "9, 17, 35, 53\u2026 elektronda:\nElektronlar sana sürüklenir\n2\u00d7 elektron menzili\nDokunan radikal elektronunu kaybeder");
+            case UpgradeType.HalogenPull: return Loc.Pct(halogenPullPerUpgrade) + Loc.T(" electron drift", " elektron sürüklenmesi");
+            case UpgradeType.HalogenGrasp:
+                return "+" + halogenGraspPerUpgrade.ToString("0.#") + Loc.T(" electron reach", " elektron menzili");
+            case UpgradeType.HalogenSnatch: return Loc.T("Steal radicals\nfrom further away", "Radikalleri daha\nuzaktan kap");
+            case UpgradeType.Alkali:
+                return Loc.T("At 3, 11, 19, 37\u2026 electrons:\nThrow your outer electron\nIt explodes and comes back",
+                             "3, 11, 19, 37\u2026 elektronda:\nDış elektronunu fırlat\nPatlar ve geri döner");
+            case UpgradeType.AlkaliBlast:
+                return "+" + alkaliBlastPerUpgrade.ToString("0.#") + Loc.T(" blast radius", " patlama yarıçapı");
+            case UpgradeType.AlkaliRange:
+                return "+" + alkaliRangePerUpgrade.ToString("0.#") + Loc.T(" throw range", " atış menzili");
+            case UpgradeType.AlkaliPath: return Loc.T("Wider path that\ndestroys enemies", "Düşmanları yok eden\ndaha geniş yol");
             default: return Loc.T("Electrons survive\n+1 more hit", "Elektronlar bir darbeye\ndaha dayanır");
         }
     }
@@ -986,6 +1095,7 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.Repel: return Loc.T("Getting hit blasts\nenemies & dust away", "Hasar aldığında düşmanları\nve tozları savurursun");
             case UpgradeType.Booster: return Loc.T("Getting hit gives\na burst of speed", "Hasar aldığında\nani bir hız kazanırsın");
             case UpgradeType.Challenger: return HydrogenText(Loc.T("Earlier picks refunded", "Önceki seçimlerin iade edilir"), true);
+            case UpgradeType.Sluggish: return NobleText(true);
             default: return UpgradeDescription(u);
         }
     }
@@ -1017,6 +1127,19 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.HopRange: return upgHopRange;
             case UpgradeType.HopCount: return upgHopCount;
             case UpgradeType.ChargeRate: return upgChargeRate;
+            case UpgradeType.Halogen: return character == Character.Halogen ? 1 : 0;
+            case UpgradeType.HalogenPull: return upgHalogenPull;
+            case UpgradeType.HalogenGrasp: return upgHalogenGrasp;
+            case UpgradeType.HalogenSnatch: return upgHalogenSnatch;
+            case UpgradeType.Alkali: return character == Character.Alkali ? 1 : 0;
+            case UpgradeType.Excited: return character == Character.Excited ? 1 : 0;
+            case UpgradeType.AngularMomentum: return upgSpin;
+            case UpgradeType.GroundState: return upgGroundState;
+            case UpgradeType.Photoelectric: return upgPhotoelectric;
+            case UpgradeType.Resonance: return upgResonance;
+            case UpgradeType.AlkaliBlast: return upgAlkaliBlast;
+            case UpgradeType.AlkaliRange: return upgAlkaliRange;
+            case UpgradeType.AlkaliPath: return upgAlkaliPath;
             default: return 0;
         }
     }
@@ -1046,6 +1169,8 @@ public partial class GameManager : MonoBehaviour
             }
             case UpgradeType.BallArmor: cap = BallArmorCap; return true;
             case UpgradeType.BallSize: cap = maxBallSizeUpgrades; return true;
+            case UpgradeType.AngularMomentum: cap = maxSpinUpgrades; return true;
+            case UpgradeType.GroundState: cap = maxGroundStateUpgrades; return true;
             case UpgradeType.PickupRange: cap = maxPickupRangeUpgrades; return true;
             case UpgradeType.Repel: cap = maxRepelUpgrades; return true;
             case UpgradeType.Booster: cap = maxBoosterUpgrades; return true;
@@ -1054,6 +1179,12 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.HopRange:
             case UpgradeType.HopCount:
             case UpgradeType.ChargeRate: cap = maxConductUpgrades; return true;
+            case UpgradeType.HalogenPull:
+            case UpgradeType.HalogenGrasp:
+            case UpgradeType.HalogenSnatch: cap = maxHalogenUpgrades; return true;
+            case UpgradeType.AlkaliBlast:
+            case UpgradeType.AlkaliRange:
+            case UpgradeType.AlkaliPath: cap = maxAlkaliUpgrades; return true;
             default: cap = 0; return false;
         }
     }
@@ -1068,7 +1199,7 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.Orbital: return new Color(0.4f, 0.85f, 1f);
             case UpgradeType.Torque: return new Color(0.75f, 0.6f, 1f);
             case UpgradeType.Challenger: return new Color(1f, 0.3f, 0.3f);
-            case UpgradeType.Sluggish: return new Color(0.45f, 0.75f, 1f);
+            case UpgradeType.Sluggish: return PendulumController.NobleGold;
             case UpgradeType.BallSize: return new Color(0.35f, 0.7f, 1f);
             case UpgradeType.PickupRange: return Pickup.Gold;
             case UpgradeType.Repel: return new Color(0.75f, 0.9f, 1f);
@@ -1084,6 +1215,19 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.HopRange: return new Color(0.6f, 0.95f, 1f);
             case UpgradeType.HopCount: return new Color(1f, 0.78f, 0.4f);
             case UpgradeType.ChargeRate: return new Color(1f, 0.95f, 0.65f);
+            case UpgradeType.Halogen: return HalogenColor;
+            case UpgradeType.HalogenPull: return new Color(0.55f, 1f, 0.55f);
+            case UpgradeType.HalogenGrasp: return Pickup.Gold;
+            case UpgradeType.HalogenSnatch: return new Color(1f, 0.55f, 0.35f);
+            case UpgradeType.Alkali: return AlkaliColor;
+            case UpgradeType.Excited: return ExcitedColor;
+            case UpgradeType.AngularMomentum: return new Color(0.45f, 0.9f, 1f);
+            case UpgradeType.GroundState: return new Color(0.6f, 0.7f, 1f);
+            case UpgradeType.Photoelectric: return new Color(1f, 0.95f, 0.55f);
+            case UpgradeType.Resonance: return new Color(1f, 0.6f, 0.85f);
+            case UpgradeType.AlkaliBlast: return new Color(1f, 0.45f, 0.3f);
+            case UpgradeType.AlkaliRange: return new Color(1f, 0.8f, 0.45f);
+            case UpgradeType.AlkaliPath: return new Color(1f, 0.7f, 0.6f);
             default: return Pickup.OrbColor;
         }
     }
@@ -1105,11 +1249,11 @@ public partial class GameManager : MonoBehaviour
         return baseStarsPerLevel + (l + every - 1) / every;
     }
 
-    /// <summary>+1 orb at levels 3, 6, 9, ... (default); The Sluggish multiplies the total.</summary>
+    /// <summary>+1 orb at levels 3, 6, 9, ... (default); the Excited Atom multiplies the total.</summary>
     int OrbsForLevel(int l)
     {
         int n = orbsPerLevel + l / Mathf.Max(1, levelsPerExtraOrb) + Lab.Level(LabPerk.ExtraElectrons);
-        if (character == Character.Sluggish) n *= Mathf.Max(1, sluggishOrbMultiplier);
+        if (character == Character.Excited) n *= Mathf.Max(1, excitedOrbMultiplier);
         return n;
     }
 
@@ -1121,6 +1265,7 @@ public partial class GameManager : MonoBehaviour
         hurtThisLevel = false;
         levelFlawless = false;
         teaching = false;
+        lessonQueue.Clear();
         if (abilityAiming) EndAbilityAim(false);   // the level sets the time scale itself
         abilityCooldown = 0f;
         AlkaliShot.ReturnAll();
@@ -1130,6 +1275,7 @@ public partial class GameManager : MonoBehaviour
         newQuanta = character == Character.Challenger ? 0 : Mathf.Min(pendingNewQuanta, levelQuanta);
         pendingNewQuanta = 0;
         if (hardReset) lives = MaxHealth;
+        if (hardReset && level == 1) guide = PlayerPrefs.GetInt(GuideKey, 0) == 0 ? GuideStep.Photon : GuideStep.None;
         else if (upgRegen > 0 && lives < MaxHealth)
         {
             lives++;   // Regeneration (rare upgrade)
@@ -1423,6 +1569,8 @@ public partial class GameManager : MonoBehaviour
         orbs.Remove(p);
         extras.Remove(p);
         if (state != State.Playing) return;
+        Codex.See(Codex.Particle(p.Kind));   // the Index's Particles tab
+        if (guide != GuideStep.None && p.Kind == GuideKind(guide)) AdvanceGuide();
 
         switch (p.Kind)
         {
@@ -1449,7 +1597,75 @@ public partial class GameManager : MonoBehaviour
         Sfx.Play("star");
         AddShake(0.15f);
         if (starsCollected >= starsNeeded) CompleteLevel();
-        else TopUpStars();
+        else
+        {
+            if (upgPhotoelectric > 0) Photoelectric(p.transform.position);
+            TopUpStars();
+        }
+    }
+
+    // ------------------------------------------------------------- first-run guide
+
+    static PickupKind GuideKind(GuideStep g) =>
+        g == GuideStep.Photon ? PickupKind.Star : g == GuideStep.Electron ? PickupKind.Orb : PickupKind.Coin;
+
+    void AdvanceGuide()
+    {
+        guide = guide == GuideStep.Photon ? GuideStep.Electron : guide == GuideStep.Electron ? GuideStep.Quantum : GuideStep.None;
+        guideTarget = null;
+        if (guide == GuideStep.None)
+        {
+            PlayerPrefs.SetInt(GuideKey, 1);
+            PlayerPrefs.Save();
+        }
+    }
+
+    /// <summary>Points at the nearest pickup of the current kind; a step with none on the map is skipped.</summary>
+    void UpdateGuide()
+    {
+        for (int guard = 0; guard < 3 && guide != GuideStep.None; guard++)
+        {
+            PickupKind kind = GuideKind(guide);
+            List<Pickup> list = kind == PickupKind.Star ? stars : kind == PickupKind.Orb ? orbs : extras;
+            Pickup best = null;
+            float bestD = float.MaxValue;
+            Vector2 at = pendulum.PivotPosition;
+            foreach (var q in list)
+            {
+                if (q == null || q.Kind != kind) continue;
+                float d = ((Vector2)q.transform.position - at).sqrMagnitude;
+                if (d < bestD) { bestD = d; best = q; }
+            }
+            // Keep pointing at the same one unless another is much closer (no flicker between two).
+            if (guideTarget != null && guideTarget.Kind == kind && list.Contains(guideTarget) && best != null
+                && ((Vector2)guideTarget.transform.position - at).sqrMagnitude < bestD * 2.25f)
+                best = guideTarget;
+            guideTarget = best;
+            if (best != null) return;
+            // Electrons can't be held (Lonely Ion, or none left) / no quanta this level: skip it.
+            if (kind == PickupKind.Star) return;   // more photons come; wait for them
+            AdvanceGuide();
+        }
+    }
+
+    /// <summary>Photoelectric Effect: the photon knocks electrons loose around where it was caught.</summary>
+    void Photoelectric(Vector2 at)
+    {
+        Color c = UpgradeColor(UpgradeType.Photoelectric);
+        float a0 = Random.Range(0f, Mathf.PI * 2f);
+        for (int i = 0; i < photoelectricElectrons; i++)
+        {
+            float a = a0 + i * Mathf.PI * 2f / Mathf.Max(1, photoelectricElectrons) + Random.Range(-0.4f, 0.4f);
+            Vector2 pos = at + new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * Random.Range(photoelectricMinDistance, photoelectricMaxDistance);
+            var go = new GameObject("Orb");
+            go.transform.position = pos;
+            var orb = go.AddComponent<Pickup>();
+            orb.Init(PickupKind.Orb, OnPickupCollected);
+            orbs.Add(orb);
+            AbilityAim.Streak(at, pos, 0.1f, c, 0.25f);
+            ParticleBursts.Burst(pos, c, 10, 4f, 0.2f, 0.4f);
+        }
+        Sfx.Play("zap", 0.4f);
     }
 
     /// <summary>Level over: every pickup still on the map pops, rippling outward from the player.</summary>
@@ -1525,29 +1741,55 @@ public partial class GameManager : MonoBehaviour
 
         int gained = full - shellsFilled;
         shellsFilled = full;
+        if (upgResonance > 0 && lives < MaxHealth)
+        {
+            lives = MaxHealth;
+            GameUI.FloatText(pendulum.PivotPosition + Vector2.up * 0.6f, Loc.T("RESONANCE", "REZONANS"),
+                             UpgradeColor(UpgradeType.Resonance), 26f);
+            ParticleBursts.Burst(pendulum.PivotPosition, Pickup.HeartColor, 30, 7f, 0.3f, 0.7f);
+            Sfx.Play("charge", 0.7f);
+        }
         pendingNewQuanta += gained * coinsPerExtraShell;
         Sfx.Play("level", 0.8f);
         AddShake(0.2f);
         ParticleBursts.Burst(pendulum.PivotPosition, Pickup.CoinColor, 36, 8f, 0.3f, 0.9f);
 
-        if (PlayerPrefs.GetInt(ShellLessonKey, 0) == 0)
-        {
-            PlayerPrefs.SetInt(ShellLessonKey, 1);
-            PlayerPrefs.Save();
-            teaching = true;
-            teachTime = 0f;
-            Time.timeScale = 0f;
-        }
-        else
+        if (!Teach(LessonKind.Shell, ShellLessonKey))
         {
             GameUI.Announce(Loc.T("ENERGY LEVEL COMPLETE", "ENERJİ SEVİYESİ TAMAMLANDI"), Pickup.CoinColor, 2.6f);
         }
     }
 
-    /// <summary>Closes the energy level lesson (key press here, or the button in GameUI).</summary>
+    /// <summary>
+    /// Shows a lesson the first time ever (queued if another one is up). False if it was
+    /// already seen before.
+    /// </summary>
+    bool Teach(LessonKind kind, string key)
+    {
+        if (PlayerPrefs.GetInt(key, 0) != 0) return false;
+        PlayerPrefs.SetInt(key, 1);
+        PlayerPrefs.Save();
+        if (teaching) { lessonQueue.Enqueue(kind); return true; }
+        StartTeaching(kind);
+        return true;
+    }
+
+    void StartTeaching(LessonKind kind)
+    {
+        if (abilityAiming) EndAbilityAim(false);
+        TeachingKind = kind;
+        LessonVersion++;
+        teaching = true;
+        teachTime = 0f;
+        Time.timeScale = 0f;
+    }
+
+    /// <summary>Closes the lesson (key press here, or the button in GameUI); the next queued one follows.</summary>
     public void EndTeaching()
     {
         if (!teaching || teachTime < TeachMinTime) return;
+        teachEndFrame = Time.frameCount;   // this press must not also fire an ability
+        if (lessonQueue.Count > 0) { StartTeaching(lessonQueue.Dequeue()); return; }
         teaching = false;
         Time.timeScale = 1f;
         Sfx.Play("start", 0.6f);
@@ -1587,6 +1829,10 @@ public partial class GameManager : MonoBehaviour
                 UpdateNeutrinoPickup(Time.deltaTime);
                 CheckEnergyLevels();
                 UpdateTraits(Time.deltaTime);
+                UpdateGuide();
+                if (kb != null && kb.spaceKey.wasPressedThisFrame && Ability != AbilityKind.None
+                    && Time.frameCount != teachEndFrame && !teaching)
+                    ToggleAbilityAim();
                 if (character != Character.Challenger)
                     runMaxElectrons = Mathf.Max(runMaxElectrons, pendulum.ElectronTotal);
                 if (PausePressed()) SetPaused(true);

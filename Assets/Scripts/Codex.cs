@@ -4,7 +4,7 @@ using UnityEngine;
 /// <summary>
 /// What the player has discovered (shown in the Index). Kept across runs and launches.
 /// Upgrades count as seen once offered on a card (a Character box once it opens);
-/// enemies and hazards once they appear.
+/// enemies and hazards once they appear; particles (photons, electrons...) once collected.
 /// </summary>
 public static class Codex
 {
@@ -14,6 +14,7 @@ public static class Codex
     public static string Upgrade(GameManager.UpgradeType u) => "upg_" + u;
     public static string Enemy(EnemyType t) => "enemy_" + t;
     public static string Hazard(HazardType t) => "hazard_" + t;
+    public static string Particle(PickupKind k) => "particle_" + k;
 
     public static bool Seen(string id)
     {

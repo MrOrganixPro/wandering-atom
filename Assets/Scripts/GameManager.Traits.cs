@@ -2,12 +2,15 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// Traits. An atom has at most one: a Character, or (plain atom only) an element trait that
-/// holds while its electron count is a real member of that group:
+/// Characters added after the first three (traits and characters are the same thing).
+/// Halogen and Alkali Metal are Characters (from the character card, one per run) whose powers
+/// only hold while the atom's electron count is a real member of that element group:
 ///  - Halogen (F, Cl, Br, I, At, Ts): every electron on the map drifts toward it, its electron
 ///    pickup range doubles, and a free radical that touches it is destroyed and its electron taken.
+///    Upgrades: Stronger Pull, Wider Grasp, Radical Snatch.
 ///  - Alkali metal (Li, Na, K, Rb, Cs, Fr): its outermost electron glows differently and can be
 ///    thrown with the ability button (see GameManager.Abilities and AlkaliShot).
+///    Upgrades: Bigger Blast, Longer Throw, Wider Path.
 /// And the Conductive character: conductivity builds up over time (to 5). An electron it would
 /// lose becomes a zap instead (1 conductivity), hopping between enemies for 1 damage each. One tick
 /// past full makes it overcharged: the next enemy that comes close is zapped for free.
@@ -16,13 +19,20 @@ public partial class GameManager
 {
     public enum ElementTrait { None, Halogen, Alkali }
 
-    [Header("Element traits (plain atom only)")]
+    [Header("Halogen and Alkali Metal (characters)")]
     [Tooltip("Halogen: every map electron creeps toward the atom at this speed...")]
     public float halogenDriftSpeed = 0.5f;
     [Tooltip("...plus this / (1 + distance), so it speeds up close by.")]
     public float halogenDriftNear = 6f;
     [Tooltip("Halogen: electron pickup range is doubled, but at least this much extra reach.")]
     public float halogenMinPickupBonus = 1.2f;
+    [Tooltip("Halogen Stronger Pull: drift speed multiplier added per upgrade.")]
+    public float halogenPullPerUpgrade = 0.5f;
+    [Tooltip("Halogen Wider Grasp: extra electron reach per upgrade (world units).")]
+    public float halogenGraspPerUpgrade = 0.6f;
+    [Tooltip("Halogen Radical Snatch: radicals this much further away get stolen, per upgrade.")]
+    public float halogenSnatchPerUpgrade = 0.4f;
+    public int maxHalogenUpgrades = 3;
     [Tooltip("Alkali: how far the thrown electron can be aimed (world units).")]
     public float alkaliThrowRange = 7f;
     public float alkaliThrowSpeed = 26f;
@@ -32,6 +42,13 @@ public partial class GameManager
     public float alkaliCooldown = 1f;
     [Tooltip("Alkali: speed dust and black holes are pushed away at.")]
     public float alkaliHazardSpeed = 18f;
+    [Tooltip("Alkali Bigger Blast: blast radius added per upgrade.")]
+    public float alkaliBlastPerUpgrade = 0.6f;
+    [Tooltip("Alkali Longer Throw: throw range added per upgrade.")]
+    public float alkaliRangePerUpgrade = 2f;
+    [Tooltip("Alkali Wider Path: path radius added per upgrade.")]
+    public float alkaliPathPerUpgrade = 0.25f;
+    public int maxAlkaliUpgrades = 3;
 
     [Header("Conductive (character)")]
     [Tooltip("Seconds per conductivity point.")]
@@ -51,24 +68,45 @@ public partial class GameManager
     public static readonly Color HalogenColor = new Color(0.75f, 1f, 0.4f);
     public static readonly Color AlkaliColor = new Color(1f, 0.62f, 0.25f);
     public static readonly Color ConductiveColor = new Color(0.95f, 0.9f, 0.35f);
+    public static readonly Color ExcitedColor = new Color(0.95f, 0.5f, 1f);
+
+    [Header("Noble Atom (character)")]
+    [Tooltip("Lab Lingering Nobility: seconds the unbreakable bonds last after the full shell is lost.")]
+    public float nobleLingerTime = 5f;
+    [Tooltip("Lab Proclamation of Nobility: radius of the wave (world units).")]
+    public float proclaimRadius = 9f;
+    [Tooltip("Proclamation: at most one wave every this many seconds.")]
+    public float proclaimCooldown = 10f;
+    [Tooltip("Proclamation: speed dust and black holes are pushed away at.")]
+    public float proclaimHazardSpeed = 22f;
 
     static readonly int[] Halogens = { 9, 17, 35, 53, 85, 117 };
     static readonly int[] Alkalis = { 3, 11, 19, 37, 55, 87 };
 
     int upgHopRange, upgHopCount, upgChargeRate;
+    int upgHalogenPull, upgHalogenGrasp, upgHalogenSnatch;
+    int upgAlkaliBlast, upgAlkaliRange, upgAlkaliPath;
+    bool wasNobleForm;
+    ElementTrait lastTrait;
+    float nobleLinger, proclaimTimer;
     int conductivity;
     bool overcharged;
     float conductTimer, crackleTimer;
 
-    // ------------------------------------------------------------ element traits
+    // ------------------------------------------------------- halogen / alkali metal
 
-    /// <summary>The element trait of a plain atom right now (characters already have their trait).</summary>
+    /// <summary>
+    /// The element power active right now: only for the Halogen / Alkali Metal character, and only
+    /// while the electron count is a member of that group.
+    /// </summary>
     public ElementTrait Trait
     {
         get
         {
-            if (character != Character.None || pendulum == null || !pendulum.IsAlive) return ElementTrait.None;
-            return TraitOf(pendulum.ElectronTotal);
+            if (pendulum == null || !pendulum.IsAlive) return ElementTrait.None;
+            ElementTrait want = character == Character.Halogen ? ElementTrait.Halogen
+                              : character == Character.Alkali ? ElementTrait.Alkali : ElementTrait.None;
+            return want != ElementTrait.None && TraitOf(pendulum.ElectronTotal) == want ? want : ElementTrait.None;
         }
     }
 
@@ -80,7 +118,8 @@ public partial class GameManager
     public bool IsAlkali => Trait == ElementTrait.Alkali;
 
     /// <summary>Halogen: drift speed of a map electron this far away.</summary>
-    public float HalogenDrift(float distance) => halogenDriftSpeed + halogenDriftNear / (1f + distance);
+    public float HalogenDrift(float distance) =>
+        (halogenDriftSpeed + halogenDriftNear / (1f + distance)) * (1f + upgHalogenPull * halogenPullPerUpgrade);
 
     /// <summary>Halogen: reach added on top of the normal pickup reach, for electrons only.</summary>
     public float HalogenPickupExtra
@@ -88,7 +127,7 @@ public partial class GameManager
         get
         {
             float b = pendulum != null ? pendulum.PickupBonus : 0f;
-            return Mathf.Max(b * 2f, halogenMinPickupBonus) - b;
+            return Mathf.Max(b * 2f, halogenMinPickupBonus) - b + upgHalogenGrasp * halogenGraspPerUpgrade;
         }
     }
 
@@ -96,7 +135,7 @@ public partial class GameManager
     public bool TryHalogenSteal(EnemyMover e)
     {
         if (!IsHalogen || e == null || e.IsDead || e.Type != EnemyType.Shard) return false;
-        if (!pendulum.Contacts(e.Position, e.radius)) return false;
+        if (!pendulum.Contacts(e.Position, e.radius + upgHalogenSnatch * halogenSnatchPerUpgrade)) return false;
         Vector2 p = e.Position;
         e.Vaporize(HalogenColor);
         pendulum.AddBall();
@@ -105,6 +144,60 @@ public partial class GameManager
         Sfx.Play("orb");
         Sfx.Play("lock", 0.5f);
         return true;
+    }
+
+    public float AlkaliThrowRange => alkaliThrowRange + upgAlkaliRange * alkaliRangePerUpgrade;
+    public float AlkaliBlastRadius => alkaliBlastRadius + upgAlkaliBlast * alkaliBlastPerUpgrade;
+    public float AlkaliPathRadius => alkaliPathRadius + upgAlkaliPath * alkaliPathPerUpgrade;
+
+    // ------------------------------------------------------------- noble atom
+
+    /// <summary>Noble Atom with a full outer shell (its electron count is a noble gas).</summary>
+    public bool IsNobleForm => character == Character.Sluggish && pendulum != null && pendulum.IsAlive
+                               && Elements.IsNoble(pendulum.ElectronTotal);
+    /// <summary>The bonds can't be broken right now (full shell, or still lingering after it).</summary>
+    public bool NobleUnbreakable => pendulum != null && pendulum.NobleBond > 0f;
+    /// <summary>Lingering Nobility: how much of the lingering time is left (0..1).</summary>
+    public float NobleLinger01 => nobleLingerTime > 0f ? Mathf.Clamp01(nobleLinger / nobleLingerTime) : 0f;
+
+    void UpdateNoble(float dt)
+    {
+        proclaimTimer -= dt;
+        bool now = IsNobleForm;
+        if (now)
+        {
+            nobleLinger = Lab.Has(LabPerk.NobleLinger) ? nobleLingerTime : 0f;
+            if (!wasNobleForm)
+            {
+                // The shell just closed: a gold flash, and the Proclamation if researched.
+                ParticleBursts.Burst(pendulum.PivotPosition, PendulumController.NobleGold, 24, 6f, 0.25f, 0.5f);
+                Sfx.Play("star", 0.6f);
+                Teach(LessonKind.Noble, NobleLessonKey);   // the first time ever: what a full shell does
+                if (Lab.Has(LabPerk.NobleProclaim) && proclaimTimer <= 0f)
+                {
+                    proclaimTimer = proclaimCooldown;
+                    NobleWave.Spawn(pendulum.PivotPosition, proclaimRadius, proclaimHazardSpeed);
+                    AddShake(0.45f);
+                }
+            }
+        }
+        else
+        {
+            if (wasNobleForm && nobleLinger <= 0f) Sfx.Play("snap", 0.5f);   // the bonds are breakable again
+            nobleLinger = Mathf.Max(0f, nobleLinger - dt);
+        }
+        wasNobleForm = now;
+
+        // Full strength while the shell is full; lingering fades and flickers as it runs out.
+        float bond = 0f;
+        if (now) bond = 1f;
+        else if (nobleLinger > 0f)
+        {
+            float left = nobleLinger / Mathf.Max(0.01f, nobleLingerTime);
+            float flicker = nobleLinger < 1.5f ? 0.5f + 0.5f * Mathf.Sin(Time.time * 22f) : 1f;
+            bond = Mathf.Max(0.05f, (0.35f + 0.45f * left) * flicker);
+        }
+        pendulum.NobleBond = bond;
     }
 
     // ------------------------------------------------------------- conductive
@@ -119,6 +212,12 @@ public partial class GameManager
     void ResetTraits()
     {
         upgHopRange = upgHopCount = upgChargeRate = 0;
+        upgHalogenPull = upgHalogenGrasp = upgHalogenSnatch = 0;
+        upgAlkaliBlast = upgAlkaliRange = upgAlkaliPath = 0;
+        wasNobleForm = false;
+        lastTrait = ElementTrait.None;
+        nobleLinger = proclaimTimer = 0f;
+        if (pendulum != null) pendulum.NobleBond = 0f;
         ResetConductivity();
         AlkaliShot.ReturnAll();
     }
@@ -136,6 +235,15 @@ public partial class GameManager
         if (pendulum == null) return;
         // Alkali: the throwable electron stands out (none while it's away).
         pendulum.AlkaliHighlight = IsAlkali && !AlkaliShot.Out ? AlkaliColor : (Color?)null;
+        // The first time ever a halogen / alkali metal power comes on, the game explains it.
+        ElementTrait trait = Trait;
+        if (trait != lastTrait)
+        {
+            if (trait == ElementTrait.Halogen) Teach(LessonKind.Halogen, HalogenLessonKey);
+            else if (trait == ElementTrait.Alkali) Teach(LessonKind.Alkali, AlkaliLessonKey);
+            lastTrait = trait;
+        }
+        UpdateNoble(dt);
         if (!IsConductive || !pendulum.IsAlive) return;
 
         if (!overcharged)
@@ -394,12 +502,12 @@ public class AlkaliShot : MonoBehaviour
         {
             var e = EnemyMover.All[i];
             if (e == null || e.IsDead) continue;
-            if (SegmentDistance(e.Position, a, b) <= gm.alkaliPathRadius + e.radius) e.Vaporize(c);
+            if (SegmentDistance(e.Position, a, b) <= gm.AlkaliPathRadius + e.radius) e.Vaporize(c);
         }
         foreach (var h in Hazard.All)
         {
             if (h == null || shoved.Contains(h)) continue;
-            if (SegmentDistance(h.transform.position, a, b) > gm.alkaliPathRadius + h.radius) continue;
+            if (SegmentDistance(h.transform.position, a, b) > gm.AlkaliPathRadius + h.radius) continue;
             shoved.Add(h);
             h.velocity = dir * gm.alkaliHazardSpeed + h.velocity * 0.2f;
             ParticleBursts.Burst(h.transform.position, c, 14, 6f, 0.25f, 0.45f);
@@ -409,7 +517,7 @@ public class AlkaliShot : MonoBehaviour
     void Explode()
     {
         Color c = GameManager.AlkaliColor;
-        float r = gm.alkaliBlastRadius;
+        float r = gm.AlkaliBlastRadius;
         for (int i = EnemyMover.All.Count - 1; i >= 0; i--)
         {
             var e = EnemyMover.All[i];
@@ -451,5 +559,58 @@ public class AlkaliShot : MonoBehaviour
     void OnDestroy()
     {
         if (Current == this) Current = null;
+    }
+}
+
+/// <summary>
+/// Noble Atom, Lab Proclamation of Nobility: a huge gold wave that grows out of the atom,
+/// vaporizing every enemy it passes and pushing dust and black holes away.
+/// </summary>
+public class NobleWave : MonoBehaviour
+{
+    const float Life = 0.6f;
+    Vector2 center;
+    float radius, hazardSpeed, t;
+    readonly HashSet<Hazard> shoved = new HashSet<Hazard>();
+
+    public static void Spawn(Vector2 at, float radius, float hazardSpeed)
+    {
+        var go = new GameObject("NobleWave");
+        var w = go.AddComponent<NobleWave>();
+        w.center = at;
+        w.radius = radius;
+        w.hazardSpeed = hazardSpeed;
+        Color c = PendulumController.NobleGold;
+        ShockRing.Spawn(at, radius, c);
+        ShockRing.Spawn(at, radius * 0.7f, Color.white);
+        ParticleBursts.Burst(at, c, 50, 12f, 0.3f, 0.7f);
+        ParticleBursts.Burst(at, Color.white, 20, 8f, 0.2f, 0.4f);
+        Sfx.Play("explode", 0.6f);
+        Sfx.Play("level", 0.5f);
+    }
+
+    void Update()
+    {
+        t += Time.deltaTime;
+        float k = Mathf.Clamp01(t / Life);
+        float r = radius * (1f - (1f - k) * (1f - k) * (1f - k));   // same easing as the ShockRing
+        Color c = PendulumController.NobleGold;
+        for (int i = EnemyMover.All.Count - 1; i >= 0; i--)
+        {
+            var e = EnemyMover.All[i];
+            if (e == null || e.IsDead) continue;
+            if (Vector2.Distance(e.Position, center) <= r + e.radius) e.Vaporize(c);
+        }
+        foreach (var h in Hazard.All)
+        {
+            if (h == null || shoved.Contains(h)) continue;
+            Vector2 d = (Vector2)h.transform.position - center;
+            if (d.magnitude > r + h.radius) continue;
+            shoved.Add(h);
+            Vector2 away = d.sqrMagnitude > 1e-4f ? d.normalized : Random.insideUnitCircle.normalized;
+            h.velocity = away * hazardSpeed + h.velocity * 0.2f;
+            ParticleBursts.Burst(h.transform.position, c, 12, 6f, 0.25f, 0.45f);
+        }
+        if (t >= Life) Destroy(gameObject);
     }
 }

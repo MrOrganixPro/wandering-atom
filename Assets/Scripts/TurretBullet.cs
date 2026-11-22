@@ -73,8 +73,9 @@ public class TurretBullet : MonoBehaviour
             Destroy(gameObject);
             return true;
         }
-        foreach (var e in EnemyMover.All)
+        for (int i = EnemyMover.All.Count - 1; i >= 0; i--)   // a hit can change the list
         {
+            var e = EnemyMover.All[i];
             if (e == null || e.IsDead) continue;
             float r = e.radius + Radius;
             if ((e.Position - p).sqrMagnitude >= r * r) continue;

@@ -4,7 +4,7 @@ using UnityEngine.InputSystem;
 using UnityEngine.UIElements;
 
 /// <summary>
-/// The Index: every power-up and enemy, "?" until the player has met it (see Codex).
+/// The Index: every power-up, enemy and particle, "?" until the player has met it (see Codex).
 /// Power-ups show their card art and text; enemies also play a small looping demo of what
 /// they do on the field (thruster with its orbiting orbs, the enemy coming at it).
 /// Opened from the title and pause screens (button or I), closed with Esc / Back.
@@ -47,8 +47,9 @@ public partial class GameUI
     Attack shownAttack;
     bool attackTipHover;
     float attackTipFade;
-    VisualElement[] tabs = new VisualElement[2];
-    Label[] tabCounts = new Label[2];
+    const int TabCount = 3;   // power-ups, enemies, particles
+    VisualElement[] tabs = new VisualElement[TabCount];
+    Label[] tabCounts = new Label[TabCount];
     readonly List<VisualElement> tiles = new List<VisualElement>();
     List<Entry> entries = new List<Entry>();
     bool indexOpen;
@@ -89,6 +90,23 @@ public partial class GameUI
             }
             return list;
         }
+        if (tab == 2)
+        {
+            Particle(list, PickupKind.Star, ProcSprites.Photon, Pickup.Gold, Loc.T("PHOTON", "FOTON"),
+                Loc.T("Collect enough of them to finish the level. More are needed deeper in.",
+                      "Bölümü bitirmek için yeterince topla. İlerledikçe daha fazlası gerekir."));
+            Particle(list, PickupKind.Orb, ProcSprites.Electron, Pickup.OrbColor, Loc.T("ELECTRON", "ELEKTRON"),
+                Loc.T("Becomes part of you: each one makes you a new element and shields your core. A bigger atom pulls more enemies.",
+                      "Senin parçan olur: her biri seni yeni bir elemente dönüştürür ve çekirdeğini korur. Büyük atom daha çok düşman çeker."));
+            Particle(list, PickupKind.Coin, ProcSprites.Quanta, Pickup.CoinColor, Loc.T("QUANTUM", "KUANTUM"),
+                Loc.T("Spend them on upgrades after the level. Each full energy level adds one more per level.",
+                      "Bölümden sonra geliştirmelere harca. Her dolu enerji seviyesi, seviye başına bir tane daha ekler."));
+            Particle(list, PickupKind.Neutrino, ProcSprites.Neutrino, Pickup.NeutrinoColor, Loc.T("NEUTRINO", "NÖTRİNO"),
+                Loc.T("Rare and hard to catch. Keep them across levels.", "Nadir ve yakalaması zor. Bölümler arasında seninle kalır."));
+            Particle(list, PickupKind.Heart, ProcSprites.Stability, Pickup.HeartColor, Loc.T("STABILITY", "KARARLILIK"),
+                Loc.T("Restores one point of stability, your life.", "Bir kararlılık puanı, yani can, geri verir."));
+            return list;
+        }
 
         var sp = FindFirstObjectByType<EnemySpawner>();
         Color shard = sp != null ? sp.shardColor : new Color(1f, 0.45f, 0.25f);
@@ -121,6 +139,9 @@ public partial class GameUI
         return list;
     }
 
+    static void Particle(List<Entry> list, PickupKind k, Sprite sprite, Color c, string name, string desc) =>
+        list.Add(new Entry { id = Codex.Particle(k), sprite = sprite, color = c, name = name, desc = desc });
+
     // ---------------------------------------------------------------- build
 
     void BuildIndex()
@@ -138,6 +159,7 @@ public partial class GameUI
         tabRow.style.marginTop = 10;
         MakeTab(tabRow, 0, ProcSprites.Quanta, Loc.T("POWER-UPS", "GÜÇLENDİRMELER"));
         MakeTab(tabRow, 1, ProcSprites.Positron, Loc.T("ENEMIES", "DÜŞMANLAR"));
+        MakeTab(tabRow, 2, ProcSprites.Photon, Loc.T("PARTICLES", "PARÇACIKLAR"));
 
         var main = Row(indexScreen);
         main.style.position = Position.Absolute;
@@ -303,7 +325,7 @@ public partial class GameUI
             indexGrid.Add(tile);
             tiles.Add(tile);
         }
-        for (int t = 0; t < 2; t++)
+        for (int t = 0; t < TabCount; t++)
         {
             int seen = 0, total = 0;
             foreach (var en in BuildEntries(t)) { total++; if (en.Seen) seen++; }
@@ -423,7 +445,8 @@ public partial class GameUI
         else if (indexOpen && kb != null)
         {
             if (kb.escapeKey.wasPressedThisFrame || kb.backspaceKey.wasPressedThisFrame || kb.iKey.wasPressedThisFrame) CloseIndex();
-            else if (kb.tabKey.wasPressedThisFrame || kb.qKey.wasPressedThisFrame || kb.eKey.wasPressedThisFrame) SetTab(1 - indexTab);
+            else if (kb.tabKey.wasPressedThisFrame || kb.eKey.wasPressedThisFrame) SetTab((indexTab + 1) % TabCount);
+            else if (kb.qKey.wasPressedThisFrame) SetTab((indexTab + TabCount - 1) % TabCount);
             else if (kb.rightArrowKey.wasPressedThisFrame || kb.dKey.wasPressedThisFrame) Select(Mathf.Min(selected + 1, entries.Count - 1));
             else if (kb.leftArrowKey.wasPressedThisFrame || kb.aKey.wasPressedThisFrame) Select(Mathf.Max(selected - 1, 0));
             else if (kb.downArrowKey.wasPressedThisFrame || kb.sKey.wasPressedThisFrame) Select(Mathf.Min(selected + 7, entries.Count - 1));

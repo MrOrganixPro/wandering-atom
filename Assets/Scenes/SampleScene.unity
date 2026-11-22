@@ -318,8 +318,8 @@ MonoBehaviour:
   turnAuthorityPerTorque: 0.15
   maxBallArmorUpgrades: 2
   levelsPerBallArmor: 4
-  ballSizePerUpgrade: 0.25
-  maxBallSizeUpgrades: 4
+  ballSizePerUpgrade: 0.35
+  maxBallSizeUpgrades: 3
   pickupRangePerUpgrade: 0.6
   maxPickupRangeUpgrades: 3
   maxRepelUpgrades: 5
@@ -344,7 +344,6 @@ MonoBehaviour:
   characterChance: 0.05
   mysteryRevealTime: 2.4
   challengerCoins: 3
-  sluggishTighten: 0.7
   sluggishMaxBallArmor: 4
   sluggishUpgradeCap: 2
   sluggishOrbMultiplier: 2
@@ -581,6 +580,11 @@ MonoBehaviour:
   - {r: 0.3, g: 0.9, b: 1, a: 1}
   - {r: 0.55, g: 0.65, b: 1, a: 1}
   - {r: 0.55, g: 1, b: 0.8, a: 1}
+  - {r: 0.2, g: 0.72, b: 0.42, a: 1}
+  - {r: 0.72, g: 0.5, b: 1, a: 1}
+  - {r: 0.18, g: 0.5, b: 0.9, a: 1}
+  - {r: 0.15, g: 0.62, b: 0.62, a: 1}
+  - {r: 0.85, g: 0.78, b: 1, a: 1}
   ballSize: 0.32
   chainColor: {r: 0.78, g: 0.7, b: 0.52, a: 1}
   spinSpeed: 160
@@ -588,7 +592,7 @@ MonoBehaviour:
   spinDrive: 15
   spinResponse: 6
   spacingStrength: 5
-  ballInertia: 0.2
+  ballInertia: 0.04
   ballMaxHits: 1
   gravity: 7
   airDrag: 0.25
@@ -597,7 +601,7 @@ MonoBehaviour:
   snapThreshold: 2.5
   substeps: 4
   snapSoundCooldown: 0.12
-  speedTrail: 0.8
+  speedTrail: 0.08
   invulnerableTime: 1.5
   impactScale: 0.8
   repelRadius: 4.5

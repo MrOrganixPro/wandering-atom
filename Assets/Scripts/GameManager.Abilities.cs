@@ -2,19 +2,19 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 /// <summary>
-/// The Noble Atom's Lab abilities (it brings the one equipped in the Lab):
+/// The Excited Atom's Lab abilities (it brings the one equipped in the Lab):
 ///  - Electrodash: burns the outermost electron to overcharge and jump instantly a fixed
 ///    distance the way you aim, untouchable on the way and for a moment after.
 ///  - Electroblast: burns the outermost electron into a huge ray to the edge of the screen
 ///    that vaporizes every enemy in it and shoves dust and black holes away.
-/// And the alkali metal's (plain atom, see GameManager.Traits): its outermost electron is thrown
+/// And the Alkali Metal character's (while an alkali metal, see GameManager.Traits): its outermost electron is thrown
 /// at the aimed point, explodes there and comes back (AlkaliShot).
 /// Used from the HUD button: time stops, the mouse aims (a preview shows what will happen),
 /// a click fires, Esc / right click / the button again cancels without spending anything.
 /// </summary>
 public partial class GameManager
 {
-    [Header("Noble Atom abilities (Lab)")]
+    [Header("Excited Atom abilities (Lab)")]
     [Tooltip("Electrodash: how far the atom jumps (world units).")]
     public float dashDistance = 5f;
     public float dashCooldown = 4f;
@@ -39,16 +39,16 @@ public partial class GameManager
     public enum AbilityKind { None, Dash, Blast, Throw }
 
     /// <summary>
-    /// The ability the atom has right now: the Noble Atom's (equipped in the Lab), or an alkali
-    /// metal's electron throw while the plain atom is one.
+    /// The ability the atom has right now: the Excited Atom's (equipped in the Lab), or the Alkali
+    /// Metal character's electron throw while its electron count is an alkali metal.
     /// </summary>
     public AbilityKind Ability
     {
         get
         {
-            if (character == Character.Sluggish)
-                return Lab.NobleAbility == LabPerk.NobleDash ? AbilityKind.Dash
-                     : Lab.NobleAbility == LabPerk.NobleBlast ? AbilityKind.Blast : AbilityKind.None;
+            if (character == Character.Excited)
+                return Lab.ExcitedAbility == LabPerk.NobleDash ? AbilityKind.Dash
+                     : Lab.ExcitedAbility == LabPerk.NobleBlast ? AbilityKind.Blast : AbilityKind.None;
             return IsAlkali ? AbilityKind.Throw : AbilityKind.None;
         }
     }
@@ -107,13 +107,13 @@ public partial class GameManager
             Vector2 w = cam.ScreenToWorldPoint(new Vector3(sp.x, sp.y, -camZ));
             Vector2 d = w - origin;
             if (d.sqrMagnitude > 0.04f) aimDir = d.normalized;
-            aimDistance = Mathf.Min(d.magnitude, alkaliThrowRange);
+            aimDistance = Mathf.Min(d.magnitude, AlkaliThrowRange);
         }
 
         Vector2 throwTo = origin + aimDir * aimDistance;
         if (ability == AbilityKind.Dash) aimFx.ShowDash(origin, origin + aimDir * dashDistance, pendulum.BallCount, DashColor);
         else if (ability == AbilityKind.Blast) aimFx.ShowBlast(origin, aimDir, BlastLength, blastWidth, BlastColor);
-        else aimFx.ShowThrow(origin, throwTo, alkaliBlastRadius, AlkaliColor);
+        else aimFx.ShowThrow(origin, throwTo, AlkaliBlastRadius, AlkaliColor);
 
         if (Time.frameCount == aimStartFrame) return;   // the click that opened it
         var kb = Keyboard.current;
@@ -124,13 +124,15 @@ public partial class GameManager
             Sfx.Play("lock", 0.5f);
             return;
         }
-        if (pointer != null && pointer.press.wasPressedThisFrame && !PointerOverAbilityButton)
+        bool clicked = pointer != null && pointer.press.wasPressedThisFrame && !PointerOverAbilityButton;
+        bool spaced = kb != null && kb.spaceKey.wasPressedThisFrame;   // Space fires at the current aim
+        if (clicked || spaced)
         {
             EndAbilityAim();
             if (ability == AbilityKind.Dash) FireDash(origin);
             else if (ability == AbilityKind.Blast) FireBlast(origin);
             else FireThrow(throwTo);
-            PendulumController.SuppressInputFrame = Time.frameCount;   // this click doesn't also grab the thruster
+            if (clicked) PendulumController.SuppressInputFrame = Time.frameCount;   // this click doesn't also grab the thruster
         }
     }
 
@@ -217,7 +219,7 @@ public partial class GameManager
     }
 }
 
-/// <summary>World-space previews for the Noble Atom's abilities, and their afterglow streaks.</summary>
+/// <summary>World-space previews for the Excited Atom's abilities, and their afterglow streaks.</summary>
 public class AbilityAim : MonoBehaviour
 {
     LineRenderer path, edgeA, edgeB;

@@ -2,9 +2,9 @@ using UnityEngine;
 using UnityEngine.UIElements;
 
 /// <summary>
-/// Energy levels: the one-time lesson when the first shell is filled with electrons (the game
-/// freezes, the screen sinks into black and the lines fade in one by one: +1 quantum per level
-/// for the rest of the run, but a bigger pull), and
+/// The one-time lessons (the game freezes, the screen sinks into black and the lines fade in one
+/// by one): the first filled energy level (+1 quantum per level for the rest of the run, but a
+/// bigger pull), and the first noble gas, halogen and alkali metal powers of those characters; and
 /// showing off a newly unlocked quantum at the start of the next level (level intro + HUD).
 /// </summary>
 public partial class GameUI
@@ -37,12 +37,7 @@ public partial class GameUI
         lessonBody.style.alignItems = Align.Center;
         lessonBody.style.paddingLeft = lessonBody.style.paddingRight = 60;
 
-        string q = Hi(Loc.T("+1 quantum", "+1 kuanta"), Pickup.CoinColor);
-        lessonLines.Clear();
-        AddLessonLine(Loc.T("ENERGY LEVEL COMPLETE", "ENERJİ SEVİYESİ TAMAMLANDI"), 48, true, Pickup.CoinColor, 6).style.marginBottom = 34;
-        AddLessonLine(Loc.T(q + " every level.", "Her seviyede " + q + "."), 30, false, StoryInk, 0).style.marginBottom = 34;
-        AddLessonLine(Loc.T("A fuller atom pulls harder.", "Dolu atom daha güçlü çeker."), 30, true, Danger, 0);
-        AddLessonLine(Loc.T("More particles will come.", "Daha çok parçacık gelir."), 30, true, Danger, 0);
+        FillLesson(GameManager.LessonKind.Shell);
 
         // Bottom: the keys, as in the story.
         lessonContinue = Row(lessonScreen);
@@ -55,6 +50,59 @@ public partial class GameUI
         Text(lessonContinue, Loc.T("continue", "devam"), 15, false, Dim).style.marginLeft = 8;
 
         Show(lessonScreen, false);
+    }
+
+    int lessonShownVersion = -1;
+
+    /// <summary>The lines of one lesson: a title, then what it does, then the catch.</summary>
+    void FillLesson(GameManager.LessonKind kind)
+    {
+        lessonBody.Clear();
+        lessonLines.Clear();
+        switch (kind)
+        {
+            case GameManager.LessonKind.Noble:
+            {
+                Color g = PendulumController.NobleGold;
+                string unbreak = Hi(Loc.T("can't be broken", "kırılamaz"), g);
+                AddLessonLine(Loc.T("NOBLE GAS", "SOY GAZ"), 48, true, g, 6).style.marginBottom = 34;
+                AddLessonLine(Loc.T("A full shell: your bonds " + unbreak + ".", "Tam kabuk: bağların " + unbreak + "."), 30, false, StoryInk, 0);
+                AddLessonLine(Loc.T("Ionizing particles and dust bounce off.", "İyonlaştırıcı parçacıklar ve toz sekip gider."), 30, false, StoryInk, 0).style.marginBottom = 34;
+                AddLessonLine(Loc.T("Positrons and black holes still take electrons.", "Pozitronlar ve kara delikler yine elektron alır."), 30, true, Danger, 0);
+                AddLessonLine(Loc.T("Gain or lose an electron and it's over.", "Bir elektron al ya da ver, biter."), 30, true, Danger, 0);
+                break;
+            }
+            case GameManager.LessonKind.Halogen:
+            {
+                Color h = GameManager.HalogenColor;
+                AddLessonLine(Loc.T("HALOGEN", "HALOJEN"), 48, true, h, 6).style.marginBottom = 34;
+                AddLessonLine(Loc.T("Electrons drift to you, and you grab them from further away.",
+                                    "Elektronlar sana sürüklenir, onları daha uzaktan kaparsın."), 30, false, StoryInk, 0);
+                AddLessonLine(Loc.T("A free radical that touches you " + Hi("loses its electron", h) + " to you.",
+                                    "Sana dokunan serbest radikal " + Hi("elektronunu sana kaptırır", h) + "."), 30, false, StoryInk, 0).style.marginBottom = 34;
+                AddLessonLine(Loc.T("Only at 9, 17, 35, 53\u2026 electrons.", "Yalnızca 9, 17, 35, 53\u2026 elektronda."), 30, true, Danger, 0);
+                break;
+            }
+            case GameManager.LessonKind.Alkali:
+            {
+                Color a = GameManager.AlkaliColor;
+                AddLessonLine(Loc.T("ALKALI METAL", "ALKALİ METAL"), 48, true, a, 6).style.marginBottom = 34;
+                AddLessonLine(Loc.T("Your outer electron is " + Hi("loose", a) + ".", "Dış elektronun " + Hi("gevşek", a) + "."), 30, false, StoryInk, 0);
+                AddLessonLine(Loc.T("Throw it with SPACE or the ability button: it explodes and comes back.",
+                                    "BOŞLUK ya da yetenek tuşuyla fırlat: patlar ve geri döner."), 30, false, StoryInk, 0).style.marginBottom = 34;
+                AddLessonLine(Loc.T("Only at 3, 11, 19, 37\u2026 electrons.", "Yalnızca 3, 11, 19, 37\u2026 elektronda."), 30, true, Danger, 0);
+                break;
+            }
+            default:
+            {
+                string q = Hi(Loc.T("+1 quantum", "+1 kuanta"), Pickup.CoinColor);
+                AddLessonLine(Loc.T("ENERGY LEVEL COMPLETE", "ENERJİ SEVİYESİ TAMAMLANDI"), 48, true, Pickup.CoinColor, 6).style.marginBottom = 34;
+                AddLessonLine(Loc.T(q + " every level.", "Her seviyede " + q + "."), 30, false, StoryInk, 0).style.marginBottom = 34;
+                AddLessonLine(Loc.T("A fuller atom pulls harder.", "Dolu atom daha güçlü çeker."), 30, true, Danger, 0);
+                AddLessonLine(Loc.T("More particles will come.", "Daha çok parçacık gelir."), 30, true, Danger, 0);
+                break;
+            }
+        }
     }
 
     Label AddLessonLine(string text, float size, bool bold, Color c, float spacing)
@@ -75,8 +123,10 @@ public partial class GameUI
         if (lessonScreen == null) return;
         float dt = Time.unscaledDeltaTime;
         bool on = gm.Teaching && st == GameManager.State.Playing;
-        if (on && !lessonOn)
+        if (on && (!lessonOn || lessonShownVersion != gm.LessonVersion))
         {
+            lessonShownVersion = gm.LessonVersion;
+            FillLesson(gm.TeachingKind);
             lessonClock = 0f;   // a fresh lesson
             Sfx.Play("reveal", 0.7f);
         }

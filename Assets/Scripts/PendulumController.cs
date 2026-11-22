@@ -63,7 +63,8 @@ public class PendulumController : MonoBehaviour
     [Header("Orbiting Balls (shells)")]
     public int[] shellCapacities = { 2, 8 };
     public float[] shellLengths = { 1.3f, 2.3f };
-    public Color[] shellColors = { new Color(0.3f, 0.9f, 1f), new Color(0.55f, 0.65f, 1f), new Color(0.55f, 1f, 0.8f) };
+    [Tooltip("One color per energy level, inner to outer: " + "cyan, periwinkle, mint, deep green, violet, deep blue, dark teal, lilac" + ".")]
+    public Color[] shellColors = { new Color(0.3f, 0.9f, 1f), new Color(0.55f, 0.65f, 1f), new Color(0.55f, 1f, 0.8f), new Color(0.2f, 0.72f, 0.42f), new Color(0.72f, 0.5f, 1f), new Color(0.18f, 0.5f, 0.9f), new Color(0.15f, 0.62f, 0.62f), new Color(0.85f, 0.78f, 1f) };
     public float ballSize = 0.32f;
     public Color chainColor = new Color(0.78f, 0.7f, 0.52f);
     [Tooltip("Automatic spin speed of the hub (degrees per second).")]
@@ -190,12 +191,21 @@ public class PendulumController : MonoBehaviour
     public int HeldOut => heldOut;
     /// <summary>Every electron the atom has: orbiting, as emitters, and thrown out.</summary>
     public int ElectronTotal => balls.Count + turretCount + heldOut;
-    /// <summary>The element the atom is right now: its electron count (0 = bare hydrogen ion); Radium (88) with emitters.</summary>
-    public int AtomicNumber => turretSlots > 0 ? 88 : ElectronTotal;
+    /// <summary>The element the atom is right now: its electron count, emitters included (0 = bare hydrogen ion).</summary>
+    public int AtomicNumber => ElectronTotal;
     /// <summary>Extra pickup reach from Pickup Range upgrades (world units).</summary>
     public float PickupBonus => pickupBonus;
     /// <summary>Alkali metal: the outermost electron is drawn in this color (null = normal).</summary>
     public Color? AlkaliHighlight { get; set; }
+
+    /// <summary>
+    /// Noble Atom: while above 0 its bonds can't be broken. Ionizing hits (free radicals, alpha
+    /// particles, gamma rays, isotopes, dust) bounce off; destructive ones (positrons, black holes)
+    /// still take electrons. The value is how strongly it shows: the energy levels shine and the
+    /// electrons get gold edges (1 = full, lower while it lingers after the full shell was lost).
+    /// </summary>
+    public float NobleBond { get; set; }
+    public static readonly Color NobleGold = new Color(1f, 0.84f, 0.38f);
     int heldOut;
     float TurretRangeNow => turretRange + turretRangeBonus;
 
@@ -432,7 +442,7 @@ public class PendulumController : MonoBehaviour
         presence = Mathf.MoveTowards(presence, upgradeHidden ? 0f : 1f, Time.unscaledDeltaTime / 0.35f);
         if (alive && pod.gameObject.activeSelf == upgradeHidden) pod.gameObject.SetActive(!upgradeHidden);
 
-        // No input while paused, nor on the frame a click fired a Noble Atom ability.
+        // No input while paused, nor on the frame a click fired an Excited Atom ability.
         if (alive && !meltingDown && Time.timeScale > 0f && Time.frameCount != SuppressInputFrame) ReadInput();
         else if (!alive || meltingDown) { thrust = Vector2.zero; EndDrag(); }
         if (meltingDown) pivotVel *= Mathf.Exp(-4f * dt);   // grinds to a halt while it comes apart
@@ -610,7 +620,7 @@ public class PendulumController : MonoBehaviour
         ClearBalls(false);
         ClearTurrets(true);
 
-        foreach (var e in EnemyMover.All) e.Repel(c, 7f, 14f, 1f);
+        for (int i = EnemyMover.All.Count - 1; i >= 0; i--) EnemyMover.All[i].Repel(c, 7f, 14f, 1f);
         foreach (var h in Hazard.All) h.Repel(c, 7f, 14f, asteroidRepelMass);
         pod.gameObject.SetActive(false);
     }
@@ -828,8 +838,9 @@ public class PendulumController : MonoBehaviour
         if (b.taut && alive)
         {
             float vt = Vector2.Dot(b.vel - pivotVel, tan);
-            float target = spinSpeed * Mathf.Deg2Rad * L;
-            float acc = Mathf.Clamp((target - vt) * spinResponse + b.spacing, -spinDrive, spinDrive);
+            float target = SpinSpeedNow * Mathf.Deg2Rad * L;
+            float drive = spinDrive * spinMult;
+            float acc = Mathf.Clamp((target - vt) * spinResponse + b.spacing, -drive, drive);
             b.vel += tan * acc * h;
         }
 
@@ -866,7 +877,7 @@ public class PendulumController : MonoBehaviour
             }
         }
         // Speed limit relative to the thruster: a fast thruster must not cap the forward-swinging balls.
-        b.vel = pivotVel + Vector2.ClampMagnitude(b.vel - pivotVel, maxSpeed);
+        b.vel = pivotVel + Vector2.ClampMagnitude(b.vel - pivotVel, maxSpeed * Mathf.Max(1f, spinMult));
     }
 
     /// <summary>Balls in a shell push toward the middle of the gap between their neighbours.</summary>
@@ -949,10 +960,17 @@ public class PendulumController : MonoBehaviour
         podGlow.color = new Color(1f, Mathf.Lerp(0.85f, 0.4f, hitFlash), Mathf.Lerp(0.5f, 0.4f, hitFlash),
             0.3f + 0.1f * Mathf.Sin(Time.time * 3f) + 0.4f * hitFlash);
 
+        float nobleShine = alive ? Mathf.Clamp01(NobleBond) : 0f;
         for (int s = 0; s < shellRings.Length; s++)
         {
             Color c = ShellColor(s);
             c.a = ShellCount(s) > 0 ? 0.1f : 0.025f;
+            if (nobleShine > 0f)   // Noble Atom: the energy levels shine gold
+            {
+                float shimmer = 0.8f + 0.2f * Mathf.Sin(Time.time * 4f + s * 1.3f);
+                c = Color.Lerp(c, Color.Lerp(NobleGold, Color.white, 0.25f), nobleShine);
+                c.a = Mathf.Lerp(c.a, 0.75f * shimmer, nobleShine);
+            }
             shellRings[s].color = c;
         }
 
@@ -983,7 +1001,16 @@ public class PendulumController : MonoBehaviour
             b.body.color = Color.Lerp(c, Color.white, b.damageFlash);
 
             // Armor ring: one extra ring brightness per extra hit the ball can still take.
-            if (b.hp > 1)
+            // Noble Atom: the bond can't break, so the ring becomes a tight gold edge instead.
+            float nobleEdge = Mathf.Clamp01(NobleBond);
+            if (nobleEdge > 0f)
+            {
+                Color edge = Color.Lerp(NobleGold, Color.white, b.snapFlash * 0.7f);
+                edge.a = (0.65f + 0.35f * b.snapFlash) * nobleEdge;
+                b.armor.color = edge;
+                b.armor.transform.localScale = Vector3.one * size * 1.22f;
+            }
+            else if (b.hp > 1)
             {
                 b.armor.color = new Color(1f, 1f, 1f, Mathf.Min(0.9f, 0.3f + 0.2f * (b.hp - 2)));
                 b.armor.transform.localScale = Vector3.one * size * (1.45f + 0.1f * Mathf.Min(b.hp - 2, 3));
@@ -1023,6 +1050,7 @@ public class PendulumController : MonoBehaviour
         UpdateThruster(dt);
         UpdateHeadingArrow();
     }
+
 
     void UpdateThruster(float dt)
     {
@@ -1138,7 +1166,7 @@ public class PendulumController : MonoBehaviour
             float L = ShellLength(s);
             Vector2 n = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle));
             Vector2 tan = new Vector2(-n.y, n.x) * dir;
-            var ball = CreateBall(s, pivot + n * L, pivotVel + tan * spinSpeed * Mathf.Deg2Rad * L);
+            var ball = CreateBall(s, pivot + n * L, pivotVel + tan * SpinSpeedNow * Mathf.Deg2Rad * L);
             ParticleBursts.Burst(ball.pos, ShellColor(s), 14, 4f, 0.22f, 0.5f);
             return true;
         }
@@ -1178,6 +1206,11 @@ public class PendulumController : MonoBehaviour
             if ((skip != null && skip.Contains(b)) || (b.pos - p).sqrMagnitude >= rb * rb) continue;
             skip?.Add(b);
             OnHitReaction();
+            if (!ignoreBinding && NobleBond > 0f)   // Noble Atom: an unbreakable bond
+            {
+                NobleBlock(b);
+                return ElectronHit.Survived;
+            }
             if (ignoreBinding) b.hp = 0;
             if (--b.hp > 0)
             {
@@ -1195,6 +1228,14 @@ public class PendulumController : MonoBehaviour
             return ElectronHit.Taken;
         }
         return ElectronHit.None;
+    }
+
+    /// <summary>Noble Atom: a hit that the bond shrugged off (a gold flash along it).</summary>
+    void NobleBlock(Ball b)
+    {
+        b.snapFlash = 1f;
+        ParticleBursts.Burst(b.pos, NobleGold, 12, 4.5f, 0.2f, 0.4f);
+        Sfx.Play("lock", 0.7f);
     }
 
     /// <summary>Size of an electron on the map (for the snatched copies enemies carry off).</summary>
@@ -1265,7 +1306,7 @@ public class PendulumController : MonoBehaviour
         float turn = Mathf.Clamp01(repelTurn + extra * repelTurnPerLevel);
         Vector2 c = PivotPosition;
 
-        foreach (var e in EnemyMover.All) e.Repel(c, radius, force, turn);
+        for (int i = EnemyMover.All.Count - 1; i >= 0; i--) EnemyMover.All[i].Repel(c, radius, force, turn);
         foreach (var h in Hazard.All) h.Repel(c, radius, force, asteroidRepelMass);
 
         ShockRing.Spawn(c, radius, repelColor);
@@ -1395,6 +1436,7 @@ public class PendulumController : MonoBehaviour
             if (b.rockTimer > 0f) continue;
             b.rockTimer = asteroidHitCooldown;
             hit = true;
+            if (NobleBond > 0f) { NobleBlock(b); continue; }   // Noble Atom: dust can't break the bond
             if (--b.hp <= 0)
             {
                 if (GameManager.Instance != null) GameManager.Instance.TryConductiveZap(b.pos, null);
@@ -1431,7 +1473,7 @@ public class PendulumController : MonoBehaviour
     }
 
     /// <summary>
-    /// Noble Atom abilities: burns the outermost electron (the highest shell, so inner energy
+    /// Excited Atom abilities: burns the outermost electron (the highest shell, so inner energy
     /// levels stay filled). False if there is none.
     /// </summary>
     public bool SacrificeOutermost(Color fxColor, out Vector2 at)
@@ -1636,6 +1678,11 @@ public class PendulumController : MonoBehaviour
     }
 
     /// <summary>Fire Rate (shots/s multiplier) and Turret Range (extra world units) upgrades.</summary>
+    /// <summary>Angular Momentum: electrons orbit this many times faster (the hub drives them harder to match).</summary>
+    public void SetSpinMultiplier(float multiplier) => spinMult = Mathf.Max(0.1f, multiplier);
+    float spinMult = 1f;
+    float SpinSpeedNow => spinSpeed * spinMult;
+
     public void ApplyTurretUpgrades(float fireRateMultiplier, float rangeBonus, bool waves = false)
     {
         fireRateMult = Mathf.Max(0.05f, fireRateMultiplier);

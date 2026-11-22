@@ -11,6 +11,11 @@ public enum LabPerk
     RareChance, CharacterChance, UnlockHydrogen, UnlockArgon, UnlockRadium,
     // Discoveries: two upgrades per character, growing out of its unlock
     IonQuanta, IonNeutrino, NobleDash, NobleBlast, RadiantSides, RadiantWaves,
+    // Discoveries: the later characters (their own upgrades are still to come). Saved by name: only append.
+    UnlockConductive, UnlockHalogen, UnlockAlkali,
+    // The Excited Atom (it took over NobleDash / NobleBlast, which keep their saved names),
+    // and the Noble Atom's own two upgrades.
+    UnlockExcited, NobleLinger, NobleProclaim,
 }
 
 /// <summary>
@@ -48,6 +53,12 @@ public static class Lab
         new[] { 30 },                  // NobleBlast
         new[] { 30 },                  // RadiantSides
         new[] { 30 },                  // RadiantWaves
+        new[] { 25 },                  // UnlockConductive
+        new[] { 25 },                  // UnlockHalogen
+        new[] { 25 },                  // UnlockAlkali
+        new[] { 25 },                  // UnlockExcited
+        new[] { 30 },                  // NobleLinger
+        new[] { 30 },                  // NobleProclaim
     };
 
     // ---- effect sizes (per level)
@@ -107,6 +118,7 @@ public static class Lab
     static readonly LabPerk[] FromMutations = { LabPerk.CharacterChance };
     static readonly LabPerk[] FromIon = { LabPerk.UnlockHydrogen };
     static readonly LabPerk[] FromNoble = { LabPerk.UnlockArgon };
+    static readonly LabPerk[] FromExcited = { LabPerk.UnlockExcited };
     static readonly LabPerk[] FromRadiant = { LabPerk.UnlockRadium };
 
     /// <summary>The nodes it grows from; it opens once every one of them has a level. Empty for roots.</summary>
@@ -122,11 +134,17 @@ public static class Lab
             case LabPerk.ExtraElectrons: return FieldPaths;
             case LabPerk.UnlockHydrogen:
             case LabPerk.UnlockArgon:
-            case LabPerk.UnlockRadium: return FromMutations;
+            case LabPerk.UnlockRadium:
+            case LabPerk.UnlockConductive:
+            case LabPerk.UnlockHalogen:
+            case LabPerk.UnlockAlkali:
+            case LabPerk.UnlockExcited: return FromMutations;
             case LabPerk.IonQuanta:
             case LabPerk.IonNeutrino: return FromIon;
             case LabPerk.NobleDash:
-            case LabPerk.NobleBlast: return FromNoble;
+            case LabPerk.NobleBlast: return FromExcited;
+            case LabPerk.NobleLinger:
+            case LabPerk.NobleProclaim: return FromNoble;
             case LabPerk.RadiantSides:
             case LabPerk.RadiantWaves: return FromRadiant;
             default: return NoParents;   // Stability, Research, RareChance, CharacterChance
@@ -145,7 +163,19 @@ public static class Lab
         p == LabPerk.UnlockHydrogen ? GameManager.Character.Challenger
         : p == LabPerk.UnlockArgon ? GameManager.Character.Sluggish
         : p == LabPerk.UnlockRadium ? GameManager.Character.Spaceship
+        : p == LabPerk.UnlockConductive ? GameManager.Character.Conductive
+        : p == LabPerk.UnlockHalogen ? GameManager.Character.Halogen
+        : p == LabPerk.UnlockAlkali ? GameManager.Character.Alkali
+        : p == LabPerk.UnlockExcited ? GameManager.Character.Excited
         : GameManager.Character.None;
+
+    /// <summary>Every character the Lab can unlock, in the order the chooser shows them.</summary>
+    public static readonly GameManager.Character[] Characters =
+    {
+        GameManager.Character.Challenger, GameManager.Character.Sluggish, GameManager.Character.Spaceship,
+        GameManager.Character.Excited, GameManager.Character.Conductive, GameManager.Character.Halogen,
+        GameManager.Character.Alkali,
+    };
 
     /// <summary>A character can only be researched once it has been met in a run (it's in the Index).</summary>
     public static bool Discovered(LabPerk p)
@@ -175,21 +205,25 @@ public static class Lab
             case GameManager.Character.Challenger: return Level(LabPerk.UnlockHydrogen) > 0;
             case GameManager.Character.Sluggish: return Level(LabPerk.UnlockArgon) > 0;
             case GameManager.Character.Spaceship: return Level(LabPerk.UnlockRadium) > 0;
+            case GameManager.Character.Conductive: return Level(LabPerk.UnlockConductive) > 0;
+            case GameManager.Character.Halogen: return Level(LabPerk.UnlockHalogen) > 0;
+            case GameManager.Character.Alkali: return Level(LabPerk.UnlockAlkali) > 0;
+            case GameManager.Character.Excited: return Level(LabPerk.UnlockExcited) > 0;
             default: return true;
         }
     }
 
     public static bool Has(LabPerk p) => Level(p) > 0;
 
-    // ------------------------------------------------------------- Noble Atom ability
+    // ------------------------------------------------------------- Excited Atom ability
 
     const string NobleEquipKey = "Pendulum_Lab_NobleEquip";
 
     /// <summary>
-    /// The Noble Atom brings one ability: the equipped one if researched, otherwise whichever
+    /// The Excited Atom brings one ability: the equipped one if researched, otherwise whichever
     /// is researched. Null when neither is.
     /// </summary>
-    public static LabPerk? NobleAbility
+    public static LabPerk? ExcitedAbility
     {
         get
         {
@@ -201,18 +235,24 @@ public static class Lab
         }
     }
 
-    public static bool IsNobleAbility(LabPerk p) => p == LabPerk.NobleDash || p == LabPerk.NobleBlast;
+    public static bool IsExcitedAbility(LabPerk p) => p == LabPerk.NobleDash || p == LabPerk.NobleBlast;
 
-    /// <summary>Makes a researched Noble ability the one the Noble Atom brings.</summary>
+    /// <summary>Makes a researched ability the one the Excited Atom brings.</summary>
     public static bool Equip(LabPerk p)
     {
-        if (!IsNobleAbility(p) || !Has(p) || NobleAbility == p) return false;
+        if (!IsExcitedAbility(p) || !Has(p) || ExcitedAbility == p) return false;
         PlayerPrefs.SetInt(NobleEquipKey, (int)p);
         PlayerPrefs.Save();
         return true;
     }
 
-    public static bool AnyCharacterUnlocked =>
-        CharacterUnlocked(GameManager.Character.Challenger) || CharacterUnlocked(GameManager.Character.Sluggish)
-        || CharacterUnlocked(GameManager.Character.Spaceship);
+    public static bool AnyCharacterUnlocked
+    {
+        get
+        {
+            foreach (var c in Characters)
+                if (CharacterUnlocked(c)) return true;
+            return false;
+        }
+    }
 }

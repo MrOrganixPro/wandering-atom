@@ -336,6 +336,19 @@ public partial class GameUI
             case GameManager.UpgradeType.ChargeRate: return ProcSprites.Bolt;
             case GameManager.UpgradeType.HopRange: return ProcSprites.Ring;
             case GameManager.UpgradeType.HopCount: return ProcSprites.Link;
+            case GameManager.UpgradeType.Halogen:
+            case GameManager.UpgradeType.HalogenPull: return ProcSprites.Electron;
+            case GameManager.UpgradeType.HalogenGrasp: return ProcSprites.Photon;
+            case GameManager.UpgradeType.HalogenSnatch: return ProcSprites.Shard;
+            case GameManager.UpgradeType.Alkali: return ProcSprites.Star;
+            case GameManager.UpgradeType.Excited: return ProcSprites.Photon;
+            case GameManager.UpgradeType.AngularMomentum: return ProcSprites.TurnArrow;
+            case GameManager.UpgradeType.GroundState: return ProcSprites.Ring;
+            case GameManager.UpgradeType.Photoelectric: return ProcSprites.Photon;
+            case GameManager.UpgradeType.Resonance: return ProcSprites.Stability;
+            case GameManager.UpgradeType.AlkaliBlast: return ProcSprites.Ring;
+            case GameManager.UpgradeType.AlkaliRange:
+            case GameManager.UpgradeType.AlkaliPath: return ProcSprites.Arrow;
             default: return ProcSprites.Arrow;   // Speed
         }
     }

@@ -76,12 +76,10 @@ public partial class GameUI : MonoBehaviour
 
     // ------------------------------------------------------------------ HUD
 
-    VisualElement hud, shellsRow, speedBox, speedFill, pauseButton, characterIcon, controlsHint;
-    Pips starPips, coinPips, heartPips, conductPips;
-    int shownShellSig = -1;
+    VisualElement hud, speedBox, speedFill, pauseButton, controlsHint;
+    Pips starPips, coinPips, heartPips;
     float controlsHintFade;
     bool controlsHintDone;
-    GameManager.Character shownCharacter = (GameManager.Character)(-1);
 
     // Recycler progress (rare upgrades): an icon that fills up, plus a dot per orb.
     class Meter { public VisualElement row, clip; public int shown = -1, shownMax = -1; }
@@ -145,8 +143,7 @@ public partial class GameUI : MonoBehaviour
         buttons.Clear();
         floaters.Clear();
         builtOffer = -1;
-        shownShellSig = -1;
-        shownCharacter = (GameManager.Character)(-1);
+        shownBadge = (GameManager.Character)(-1);
         shownElement = -999;
 
         BuildHud();
@@ -372,38 +369,36 @@ public partial class GameUI : MonoBehaviour
     {
         hud = Layer(root);
 
-        // Top-left: level, stars, orbs per orbit (and turrets), coins, recyclers, character.
+        // Top-left: the atom card (element, character, energy levels, the character's meter),
+        // then this level's goals (photons, quanta), then the run's resources.
         var left = Box(hud);
         left.style.position = Position.Absolute;
         left.style.left = 24;
         left.style.top = 16;
         left.style.alignItems = Align.FlexStart;
 
-        starPips = MakePips(left, ProcSprites.Photon, 26, 3, 340);
+        BuildAtomCard(left);
+
+        var goals = Row(left);
+        goals.style.marginTop = 14;
+        goals.style.alignItems = Align.Center;
+        starPips = MakePips(goals, ProcSprites.Photon, 24, 3, 220);
         starPips.row.style.justifyContent = Justify.FlexStart;
-
-        shellsRow = Row(left);
-        shellsRow.style.flexWrap = Wrap.Wrap;
-        shellsRow.style.maxWidth = 360;
-        shellsRow.style.minHeight = 22;
-        shellsRow.style.marginTop = 4;
-
-        coinPips = MakePips(left, ProcSprites.Quanta, 20, 4, 340);
+        var split = Box(goals);   // a thin divider between the two goals
+        split.style.width = 1;
+        split.style.height = 20;
+        split.style.marginLeft = split.style.marginRight = 10;
+        split.style.backgroundColor = new Color(1f, 1f, 1f, 0.15f);
+        coinPips = MakePips(goals, ProcSprites.Quanta, 20, 4, 220);
         coinPips.row.style.justifyContent = Justify.FlexStart;
-        coinPips.row.style.marginTop = 6;
-        BuildHudNeutrinos(left);
 
-        conductPips = MakePips(left, ProcSprites.Bolt, 20, 3, 340);   // Conductive: conductivity
-        conductPips.row.style.justifyContent = Justify.FlexStart;
-        conductPips.row.style.marginTop = 6;
-
-        heartMeter = MakeMeter(left, ProcSprites.Stability, Pickup.HeartColor);
-        coinMeter = MakeMeter(left, ProcSprites.Quanta, Pickup.CoinColor);
-
-        characterIcon = Box(left);
-        characterIcon.style.marginTop = 6;
-
-        BuildElementTile();
+        var run = Row(left);
+        run.style.marginTop = 4;
+        run.style.alignItems = Align.Center;
+        BuildHudNeutrinos(run);
+        heartMeter = MakeMeter(run, ProcSprites.Stability, Pickup.HeartColor);
+        coinMeter = MakeMeter(run, ProcSprites.Quanta, Pickup.CoinColor);
+        heartMeter.row.style.marginLeft = coinMeter.row.style.marginLeft = 10;
 
         floatLayer = Layer(hud);
 
@@ -454,7 +449,8 @@ public partial class GameUI : MonoBehaviour
         speedFill.style.overflow = Overflow.Hidden;
         SpeedArrowRow(speedFill, new Color(1f, 0.75f, 0.4f, 0.5f));
 
-        BuildAbilityButton();   // Noble Atom: just above the speed bar
+        BuildAbilityButton();
+        BuildGuide();   // Noble Atom: just above the speed bar
 
         // First level of a run: the controls, until the player moves.
         controlsHint = Row(hud);
@@ -730,21 +726,16 @@ public partial class GameUI : MonoBehaviour
 
     // ------------------------------------------------------------ element tile
 
-    static readonly Color RadiumGlow = new Color(0.6f, 1f, 0.45f);
 
     VisualElement elementTile;
     Label elementNumber, elementSymbol, elementName, elementCharge;
     int shownElement = -999;
     float elementPop;
 
-    /// <summary>Periodic-table tile (top center): the element your electron count makes you.</summary>
-    void BuildElementTile()
+    /// <summary>Periodic-table tile (the atom card, top-left): the element your electron count makes you.</summary>
+    void BuildElementTile(VisualElement parent)
     {
-        elementTile = Box(hud);
-        elementTile.style.position = Position.Absolute;
-        elementTile.style.top = 12;
-        elementTile.style.left = Length.Percent(50);
-        elementTile.style.marginLeft = -40;
+        elementTile = Box(parent);
         elementTile.style.width = 80;
         elementTile.style.height = 88;
         elementTile.style.alignItems = Align.Center;
@@ -769,10 +760,9 @@ public partial class GameUI : MonoBehaviour
     {
         PendulumController pc = gm.Pendulum;
         int electrons = pc != null ? pc.ElectronTotal : 0;
-        bool radium = gm.ActiveCharacter == GameManager.Character.Spaceship;
-        bool ion = gm.ActiveCharacter == GameManager.Character.Challenger || (!radium && electrons == 0);
-        int key = radium ? 88 : ion ? 0 : electrons;
-        GameManager.ElementTrait trait = gm.Trait;   // halogen / alkali metal (plain atom only)
+        bool ion = gm.ActiveCharacter == GameManager.Character.Challenger || electrons == 0;
+        int key = ion ? 0 : electrons;
+        GameManager.ElementTrait trait = gm.Trait;   // Halogen / Alkali Metal character, while its power is on
         int shownKey = key + 1000 * (int)trait;
 
         if (shownKey != shownElement)
@@ -780,16 +770,16 @@ public partial class GameUI : MonoBehaviour
             bool gained = shownElement != -999 && key > shownElement % 1000;
             shownElement = shownKey;
             elementPop = 1f;
-            bool noble = !radium && Elements.IsNoble(key);   // a full shell
-            Color accent = radium ? RadiumGlow : ion ? Danger : noble ? Pickup.Gold
+            bool noble = Elements.IsNoble(key);   // a full shell
+            Color accent = ion ? Danger : noble ? Pickup.Gold
                          : trait == GameManager.ElementTrait.Halogen ? GameManager.HalogenColor
                          : trait == GameManager.ElementTrait.Alkali ? GameManager.AlkaliColor : Pickup.OrbColor;
-            bool bold = noble || radium || trait != GameManager.ElementTrait.None;   // traits get the bold frame too
-            elementNumber.text = radium ? "88" : (ion ? 1 : key).ToString();
-            elementSymbol.text = radium ? "Ra" : Elements.Symbol(ion ? 1 : key);
+            bool bold = noble || trait != GameManager.ElementTrait.None;   // an active element power gets the bold frame too
+            elementNumber.text = (ion ? 1 : key).ToString();
+            elementSymbol.text = Elements.Symbol(ion ? 1 : key);
             elementCharge.text = ion ? "+" : "";
             elementCharge.style.color = accent;
-            elementName.text = radium ? Loc.T("Radium", "Radyum") : Elements.Name(key);
+            elementName.text = Elements.Name(key);
             elementSymbol.style.color = accent;
             Border(elementTile, bold ? 2.5f : 1.5f, WithAlpha(accent, bold ? 0.95f : 0.55f));
             if (gained && noble && pc != null)   // shell completed: celebrate the noble gas
@@ -883,72 +873,23 @@ public partial class GameUI : MonoBehaviour
         Show(pauseButton, st == GameManager.State.Playing);
 
         UpdateElementTile();
+        UpdateAtomCard();
         UpdateHudNeutrinos();
         UpdateAbilityButton(st);
+        UpdateGuide(st);
 
         starPips.Set(gm.StarsNeeded, gm.StarsCollected, Pickup.Gold, Faint);
         coinPips.Set(Mathf.Max(gm.LevelQuanta, gm.LevelCoins), gm.LevelCoins, Pickup.CoinColor, Faint);
         GlowNewQuantaPips();
         heartPips.Set(gm.MaxHealth, gm.Lives, Pickup.HeartColor, Faint);
-        UpdateConductPips();
-
-        if (shownCharacter != gm.ActiveCharacter)
-        {
-            shownCharacter = gm.ActiveCharacter;
-            GameManager.UpgradeType card = GameManager.CharacterCard(shownCharacter);
-            bool any = shownCharacter != GameManager.Character.None;
-            Show(characterIcon, any);
-            characterIcon.Clear();
-            if (any) Icon(characterIcon, IconFor(card), 24, GameManager.UpgradeColor(card));
-        }
         UpdateControlsHint(st);
 
         PendulumController pc = gm.Pendulum;
         if (pc == null) return;
 
-        // Turrets (Spaceship), then one dot per orb slot, grouped by orbit.
-        int sig = pc.ShellTotal * 7 + pc.TurretSlots * 1009 + pc.TurretCount * 31337;
-        for (int i = 0; i < pc.ShellTotal; i++) sig = sig * 31 + pc.ShellCount(i) * 97 + pc.ShellCapacity(i);
-        if (sig != shownShellSig)
-        {
-            shownShellSig = sig;
-            shellsRow.Clear();
-            Color turret = GameManager.UpgradeColor(GameManager.UpgradeType.Spaceship);
-            for (int t = 0; t < pc.TurretSlots; t++)
-                Icon(shellsRow, ProcSprites.Trefoil, 16, t < pc.TurretCount ? turret : Faint).style.marginRight = 3;
-            for (int s = 0; s < pc.ShellTotal; s++)
-            {
-                var group = Row(shellsRow);
-                group.style.flexWrap = Wrap.Wrap;
-                group.style.marginBottom = 3;
-                if (s > 0 || pc.TurretSlots > 0) group.style.marginLeft = 10;
-                Color c = pc.ShellColor(s);
-                for (int i = 0; i < pc.ShellCapacity(s); i++)
-                    Icon(group, ProcSprites.Ball, 12, i < pc.ShellCount(s) ? c : Faint).style.marginRight = 2;
-            }
-            Show(shellsRow, pc.ShellTotal > 0 || pc.TurretSlots > 0);
-        }
 
         Show(speedBox, st == GameManager.State.Playing);
         speedFill.style.width = Length.Percent(100f * Mathf.Clamp01(pc.Speed / Mathf.Max(0.01f, pc.MaxSpeed)));
-    }
-
-    /// <summary>Conductive: a bolt per conductivity point; all of them flicker white when overcharged.</summary>
-    void UpdateConductPips()
-    {
-        bool on = gm.IsConductive;
-        Show(conductPips.row, on);
-        if (!on) return;
-        bool over = gm.Overcharged;
-        float ut = Time.unscaledTime;
-        Color lit = over ? Color.Lerp(GameManager.ConductiveColor, Color.white, 0.5f + 0.5f * Mathf.Sin(ut * 14f))
-                         : GameManager.ConductiveColor;
-        conductPips.Set(GameManager.MaxConductivity, gm.Conductivity, lit, Faint);
-        for (int i = 0; i < conductPips.items.Count; i++)
-        {
-            float s = over ? 1.1f + 0.1f * Mathf.Sin(ut * 10f + i) : 1f;
-            conductPips.items[i].style.scale = new Scale(new Vector3(s, s, 1f));
-        }
     }
 
     /// <summary>Controls shown on level 1 of a run until the player first moves, then fade out.</summary>

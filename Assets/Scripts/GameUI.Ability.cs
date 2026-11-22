@@ -2,7 +2,7 @@ using UnityEngine;
 using UnityEngine.UIElements;
 
 /// <summary>
-/// The Noble Atom's ability button (bottom middle of the HUD): its icon, a cooldown shade that
+/// The ability button (bottom-left of the HUD, or SPACE): its icon, a cooldown shade that
 /// drains away, greyed out without an electron to burn. Clicking it stops time to aim; while
 /// aiming a hint explains how to fire or cancel.
 /// </summary>
@@ -18,9 +18,10 @@ public partial class GameUI
     {
         abilityBox = Box(hud);
         abilityBox.style.position = Position.Absolute;
-        abilityBox.style.left = abilityBox.style.right = 0;
-        abilityBox.style.bottom = 36;
-        abilityBox.style.alignItems = Align.Center;
+        abilityBox.style.left = 32;
+        abilityBox.style.bottom = 28;
+        abilityBox.style.width = 220;
+        abilityBox.style.alignItems = Align.FlexStart;
 
         abilityHint = Text(abilityBox, "", 15, true, Color.white);
         abilityHint.style.letterSpacing = 2;
@@ -33,6 +34,7 @@ public partial class GameUI
         abilityButton.style.overflow = Overflow.Hidden;
         Radius(abilityButton, 33);
         abilityBox.Add(abilityButton);
+        Keycap(abilityBox, Loc.T("SPACE", "BOŞLUK"), 16).style.marginTop = 8;
 
         abilityIconHolder = Box(abilityButton);
         abilityShade = Box(abilityButton);   // the cooldown: a dark shade that drains from the top
@@ -82,7 +84,7 @@ public partial class GameUI
         abilityButton.style.scale = new Scale(new Vector3(s, s, 1f));
 
         if (aiming)
-            abilityHint.text = Loc.T("CLICK  ·  ESC CANCEL", "TIKLA  ·  ESC İPTAL");
+            abilityHint.text = Loc.T("CLICK / SPACE  ·  ESC", "TIKLA / BOŞLUK  ·  ESC");
         else if (!gm.AbilityHasElectron)
             abilityHint.text = Loc.T("NO ELECTRON", "ELEKTRON YOK");
         else abilityHint.text = "";

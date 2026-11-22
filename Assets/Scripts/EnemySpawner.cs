@@ -235,7 +235,7 @@ public class EnemySpawner : MonoBehaviour
         {
             elapsed += Time.deltaTime;
             UpdateRain(Time.deltaTime);
-            if (!GammaRainActive) timer -= Time.deltaTime;   // normal waves hold off during the rain
+            timer -= Time.deltaTime;   // normal waves keep coming during the rain too
             if (timer <= 0f)
             {
                 SpawnWave();
