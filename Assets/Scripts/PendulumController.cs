@@ -182,12 +182,21 @@ public class PendulumController : MonoBehaviour
     public int ShellCapacity(int s) => s >= 0 && s < shellCapacities.Length ? shellCapacities[s] : 0;
     /// <summary>Everything orbs can fill: turret slots (Spaceship) plus every shell.</summary>
     public int Capacity { get { int c = turretSlots; foreach (int x in shellCapacities) c += x; return c; } }
-    public bool IsFull => balls.Count + turretCount >= Capacity;
+    public bool IsFull => ElectronTotal >= Capacity;
     /// <summary>Spaceship: turret slots (0 = no turrets) and how many are built.</summary>
     public int TurretSlots => turretSlots;
     public int TurretCount => turretCount;
+    /// <summary>Electrons away from the atom that still count as its own (the alkali metal's thrown one).</summary>
+    public int HeldOut => heldOut;
+    /// <summary>Every electron the atom has: orbiting, as emitters, and thrown out.</summary>
+    public int ElectronTotal => balls.Count + turretCount + heldOut;
     /// <summary>The element the atom is right now: its electron count (0 = bare hydrogen ion); Radium (88) with emitters.</summary>
-    public int AtomicNumber => turretSlots > 0 ? 88 : balls.Count + turretCount;
+    public int AtomicNumber => turretSlots > 0 ? 88 : ElectronTotal;
+    /// <summary>Extra pickup reach from Pickup Range upgrades (world units).</summary>
+    public float PickupBonus => pickupBonus;
+    /// <summary>Alkali metal: the outermost electron is drawn in this color (null = normal).</summary>
+    public Color? AlkaliHighlight { get; set; }
+    int heldOut;
     float TurretRangeNow => turretRange + turretRangeBonus;
 
     /// <summary>Length of the outermost rope in use (how far the balls reach).</summary>
@@ -960,14 +969,17 @@ public class PendulumController : MonoBehaviour
         else reachRing.color = Color.clear;
         float size = BallWorldSize;
 
-        // Balls.
+        // Balls. An alkali metal's outermost electron (the one it throws) stands out.
+        int outer = AlkaliHighlight.HasValue ? OutermostIndex() : -1;
+        Ball special = outer >= 0 ? balls[outer] : null;
         foreach (var b in balls)
         {
             b.snapFlash = Mathf.MoveTowards(b.snapFlash, 0f, dt * 5f);
             b.damageFlash = Mathf.MoveTowards(b.damageFlash, 0f, dt * 4f);
             b.rockTimer -= dt;
             float speed01 = (b.vel - pivotVel).magnitude / Mathf.Max(1f, maxSpeed);
-            Color c = ShellColor(b.shell);
+            Color c = b == special ? AlkaliHighlight.Value : ShellColor(b.shell);
+            if (b == special) speed01 = Mathf.Max(speed01, 0.5f + 0.3f * Mathf.Sin(Time.time * 6f));   // a bigger, pulsing glow
             b.body.color = Color.Lerp(c, Color.white, b.damageFlash);
 
             // Armor ring: one extra ring brightness per extra hit the ball can still take.
@@ -1366,7 +1378,13 @@ public class PendulumController : MonoBehaviour
             Ball b = balls[i];
             Vector2 off = b.pos - c;
             if (off.sqrMagnitude >= rb * rb) continue;
-            if (crushBalls) { RemoveBall(i, col); hit = true; continue; }
+            if (crushBalls)
+            {
+                if (GameManager.Instance != null) GameManager.Instance.TryConductiveZap(b.pos, null);   // Conductive: it goes out as a zap
+                RemoveBall(i, col);
+                hit = true;
+                continue;
+            }
 
             // Asteroid: bounce off the surface, and lose one hit (then a short grace period).
             float bd = off.magnitude;
@@ -1377,7 +1395,11 @@ public class PendulumController : MonoBehaviour
             if (b.rockTimer > 0f) continue;
             b.rockTimer = asteroidHitCooldown;
             hit = true;
-            if (--b.hp <= 0) RemoveBall(i, col);
+            if (--b.hp <= 0)
+            {
+                if (GameManager.Instance != null) GameManager.Instance.TryConductiveZap(b.pos, null);
+                RemoveBall(i, col);
+            }
             else
             {
                 b.damageFlash = 1f;
@@ -1466,6 +1488,53 @@ public class PendulumController : MonoBehaviour
             Destroy(balls[i].root);
         }
         balls.Clear();
+        heldOut = 0;
+    }
+
+    /// <summary>The ball in the highest shell (the one abilities burn and the alkali metal throws), or -1.</summary>
+    int OutermostIndex()
+    {
+        int best = -1;
+        for (int i = 0; i < balls.Count; i++)
+            if (best < 0 || balls[i].shell >= balls[best].shell) best = i;
+        return best;
+    }
+
+    /// <summary>
+    /// Alkali metal: the outermost electron leaves its orbit to be thrown. It still counts as the
+    /// atom's (HeldOut) until ReturnHeld. False if there is none.
+    /// </summary>
+    public bool ThrowOutermost(out Vector2 at)
+    {
+        at = PivotPosition;
+        int i = OutermostIndex();
+        if (i < 0) return false;
+        Ball b = balls[i];
+        at = b.pos;
+        Destroy(b.root);
+        balls.RemoveAt(i);
+        heldOut++;
+        return true;
+    }
+
+    /// <summary>The thrown electron is back: it rejoins an orbit.</summary>
+    public void ReturnHeld()
+    {
+        if (heldOut <= 0) return;
+        heldOut--;
+        if (alive) AddBall();
+    }
+
+    /// <summary>True if the circle touches the core or an electron (no pickup reach).</summary>
+    public bool Contacts(Vector2 p, float r)
+    {
+        if (!alive || meltingDown) return false;
+        float rc = r + coreRadius;
+        if ((PivotPosition - p).sqrMagnitude < rc * rc) return true;
+        float rb = r + BallRadius;
+        foreach (var b in balls)
+            if ((b.pos - p).sqrMagnitude < rb * rb) return true;
+        return false;
     }
 
     /// <summary>Called by an enemy that reached the thruster.</summary>

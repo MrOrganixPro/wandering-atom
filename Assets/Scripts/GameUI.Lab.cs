@@ -104,7 +104,7 @@ public partial class GameUI
 
     // Game over payout
     VisualElement payoutBox, payoutTotalRow;
-    Label payoutElement, payoutElementGain, payoutLevel, payoutLevelGain, payoutBonus, payoutTotal, payoutNote, payoutBank;
+    Label payoutTotal, payoutNote;
     int payoutShownVersion = -1, payoutTicked;
 
     static readonly string[] BranchNamesEn = { "ATOM", "FIELD", "DISCOVERIES" };
@@ -165,34 +165,23 @@ public partial class GameUI
     {
         switch (p)
         {
-            case LabPerk.Stability: return Loc.T("Every run starts with +1 max stability per level.", "Her oyun, seviye başına +1 azami kararlılıkla başlar.");
-            case LabPerk.StartOrbital: return Loc.T("Every run starts with a New Orbital (+2 electron slots) per level.", "Her oyun, seviye başına bir Yeni Orbitalle (+2 elektron yuvası) başlar.");
-            case LabPerk.StartNeutrino: return Loc.T("Every run starts with +1 neutrino per level.", "Her oyun, seviye başına +1 nötrinoyla başlar.");
-            case LabPerk.SecondWind: return Loc.T("Once per run, a hit that would destroy your core leaves it at 1 stability instead, with a shockwave and 2 seconds of safety.",
-                                                  "Oyun başına bir kez, çekirdeğini yok edecek bir vuruş onu 1 kararlılıkta bırakır; bir şok dalgası ve 2 saniyelik koruma da gelir.");
-            case LabPerk.Research: return Loc.T("+10% Research Data from every run, per level.", "Seviye başına her oyundan %10 fazla Araştırma Verisi.");
-            case LabPerk.ExtraElectrons: return Loc.T("+1 electron placed on the map every level, per level.", "Seviye başına her bölümde haritaya +1 elektron yerleşir.");
-            case LabPerk.StabilityPickup: return Loc.T("When a level starts and you're below max stability, there's a 20% chance per level that a stability point is lying around.",
-                                                       "Bir bölüme azami kararlılığın altında başlarsan, seviye başına %20 ihtimalle ortalıkta bir kararlılık puanı bulunur.");
-            case LabPerk.NeutrinoPickup: return Loc.T("A rare, pale neutrino can drift through a level: 5% at first, +5% per level (up to 20%). It passes through everything: catch it.",
-                                                      "Bir bölümde nadiren soluk bir nötrino süzülebilir: başta %5, seviye başına %5 artar (en çok %20). Her şeyin içinden geçer: yakala onu.");
-            case LabPerk.RareChance: return Loc.T("Rare upgrades are offered 5% of the time; +1% per level.", "Nadir geliştirmeler %5 ihtimalle çıkar; seviye başına %1 artar.");
-            case LabPerk.CharacterChance: return Loc.T("A character box appears 5% of the time; +1% per level.", "Karakter kutusu %5 ihtimalle çıkar; seviye başına %1 artar.");
-            case LabPerk.IonQuanta: return Loc.T("Lonely Ion: +1 base quantum every level (3 on levels 1-5, 4 on 6-10, and so on).",
-                                                 "Yalnız İyon: her seviyede +1 temel kuantum (1-5. seviyelerde 3, 6-10'da 4 ve böyle devam eder).");
-            case LabPerk.IonNeutrino: return Loc.T("Lonely Ion: a neutrino always drifts through every level, on top of the usual chance of one.",
-                                                   "Yalnız İyon: her seviyede mutlaka bir nötrino süzülür; olağan şansla gelen de cabası.");
-            case LabPerk.NobleDash: return Loc.T("Noble Atom ability: time stops while you aim, then the atom burns its outermost electron to overcharge and dash instantly a fixed distance, untouchable on the way. 4 s cooldown.",
-                                                 "Soy Atom yeteneği: nişan alırken zaman durur; atom en dıştaki elektronunu yakıp aşırı yüklenir ve sabit bir mesafeye anında atılır, yolda ona hiçbir şey dokunamaz. 4 sn bekleme.");
-            case LabPerk.NobleBlast: return Loc.T("Noble Atom ability: time stops while you aim, then the atom burns its outermost electron into a huge ray to the edge of the screen. Every enemy in it is vaporized; dust and black holes are shoved away. 10 s cooldown.",
-                                                  "Soy Atom yeteneği: nişan alırken zaman durur; atom en dıştaki elektronunu ekranın kenarına uzanan dev bir ışına dönüştürür. İçindeki bütün düşmanlar buharlaşır; toz taneleri ve kara delikler savrulup gider. 10 sn bekleme.");
-            case LabPerk.RadiantSides: return Loc.T("Radiant: the first energy level holds 4 emitters instead of 2, each aiming on its own.",
-                                                    "Işıyan: ilk enerji seviyesi 2 yerine 4 yayıcı taşır; her biri kendi hedefini seçer.");
-            case LabPerk.RadiantWaves: return Loc.T("Radiant: emitters fire widening arcs of decay instead of bolts. A wave passes through and hits every enemy it touches.",
-                                                    "Işıyan: yayıcılar mermi yerine genişleyen bozunma yayları atar. Dalga içinden geçer ve dokunduğu her düşmanı vurur.");
-            default:
-                return Loc.T("Choose to start any run as " + PerkName(p) + ". (It can still turn up in a character box as usual.)",
-                             "Dilediğin oyuna " + PerkName(p) + " olarak başlayabilirsin. (Karakter kutusunda yine de çıkabilir.)");
+            case LabPerk.Stability: return Loc.T("Start runs with +1 max stability.", "Oyuna +1 azami kararlılıkla başla.");
+            case LabPerk.StartOrbital: return Loc.T("Start runs with a New Orbital.", "Oyuna bir Yeni Orbitalle başla.");
+            case LabPerk.StartNeutrino: return Loc.T("Start runs with +1 neutrino.", "Oyuna +1 nötrinoyla başla.");
+            case LabPerk.SecondWind: return Loc.T("Survive one fatal hit per run.", "Oyun başına bir ölümcül darbeden kurtul.");
+            case LabPerk.Research: return Loc.T("+10% data from every run.", "Her oyundan %10 fazla veri.");
+            case LabPerk.ExtraElectrons: return Loc.T("+1 electron on the map every level.", "Her bölümde haritada +1 elektron.");
+            case LabPerk.StabilityPickup: return Loc.T("+20% chance of a stability pickup per level.", "Bölüm başına %20 kararlılık bulma şansı.");
+            case LabPerk.NeutrinoPickup: return Loc.T("+5% chance of a neutrino per level (max 20%).", "Bölüm başına %5 nötrino şansı (en çok %20).");
+            case LabPerk.RareChance: return Loc.T("+1% rare upgrade chance (base 5%).", "+%1 nadir geliştirme şansı (temel %5).");
+            case LabPerk.CharacterChance: return Loc.T("+1% character box chance (base 5%).", "+%1 karakter kutusu şansı (temel %5).");
+            case LabPerk.IonQuanta: return Loc.T("Lonely Ion: +1 quantum every level.", "Yalnız İyon: her seviyede +1 kuantum.");
+            case LabPerk.IonNeutrino: return Loc.T("Lonely Ion: a neutrino every level.", "Yalnız İyon: her seviyede bir nötrino.");
+            case LabPerk.NobleDash: return Loc.T("Burn an electron: dash, untouchable. 4s.", "Bir elektron yak: dokunulmaz atıl. 4 sn.");
+            case LabPerk.NobleBlast: return Loc.T("Burn an electron: a ray that vaporizes enemies. 10s.", "Bir elektron yak: düşmanları buharlaştıran ışın. 10 sn.");
+            case LabPerk.RadiantSides: return Loc.T("Radiant: 4 emitters instead of 2.", "Işıyan: 2 yerine 4 yayıcı.");
+            case LabPerk.RadiantWaves: return Loc.T("Radiant: piercing decay waves.", "Işıyan: delip geçen bozunma dalgaları.");
+            default: return Loc.T("Start any run as " + PerkName(p) + ".", "Oyuna " + PerkName(p) + " olarak başla.");
         }
     }
 
@@ -845,25 +834,21 @@ public partial class GameUI
         Border(labTip, 2f, WithAlpha(disc ? c : Color.white, disc ? 0.8f : 0.3f));
         labTipTitle.text = disc ? PerkName(p) : "???";
         labTipTitle.style.color = disc ? c : Dim;
-        labTipLevel.text = Loc.T(BranchNamesEn[n.branch], BranchNamesTr[n.branch]) + "   ·   "
-            + (max > 1 ? Loc.T("LEVEL ", "SEVİYE ") + lvl + " / " + max
-                       : lvl > 0 ? Loc.T("RESEARCHED", "ARAŞTIRILDI")
-                       : n.keystone ? Loc.T("KEYSTONE", "KİLİT TAŞI") : Loc.T("ONE-TIME RESEARCH", "TEK SEFERLİK ARAŞTIRMA"));
+        labTipLevel.text = max > 1 ? lvl + " / " + max : "";
+        Show(labTipLevel, max > 1);
         labTipLevel.style.color = WithAlpha(LabBranchColor[n.branch], 0.85f);
         labTipBody.text = disc ? PerkBody(p)
-            : Loc.T("A character you haven't met yet. Find it in a character box during a run, then research it here.",
-                    "Henüz karşılaşmadığın bir karakter. Önce bir oyunda karakter kutusundan çıkar, sonra burada araştır.");
+            : Loc.T("Find it in a character box first.", "Önce bir karakter kutusunda bul.");
 
         string status;
         Color sc = Lab.DataColor;
         if (lvl >= max && Lab.IsNobleAbility(p))
         {
             bool equipped = Lab.NobleAbility == p;
-            status = equipped ? Loc.T("EQUIPPED: the Noble Atom brings this one", "TAKILI: Soy Atom bunu getirir")
-                              : Loc.T("Click to equip (only one ability at a time)", "Takmak için tıkla (aynı anda tek yetenek)");
+            status = equipped ? Loc.T("EQUIPPED", "TAKILI") : Loc.T("CLICK TO EQUIP", "TAKMAK İÇİN TIKLA");
             sc = equipped ? c : Dim;
         }
-        else if (lvl >= max) { status = Loc.T("FULLY RESEARCHED", "TAMAMEN ARAŞTIRILDI"); sc = c; }
+        else if (lvl >= max) { status = Loc.T("MAXED", "TAMAMLANDI"); sc = c; }
         else if (!open)
         {
             var needs = new List<string>();
@@ -872,13 +857,12 @@ public partial class GameUI
             status = Loc.T("Needs: ", "Gerekli: ") + string.Join(" + ", needs);
             sc = Dim;
         }
-        else if (!disc) { status = Loc.T("Not discovered yet", "Henüz keşfedilmedi"); sc = Dim; }
+        else if (!disc) { status = Loc.T("UNDISCOVERED", "KEŞFEDİLMEDİ"); sc = Dim; }
         else
         {
             int cost = Lab.NextCost(p);
             bool can = Lab.Data >= cost;
-            status = Loc.T("Cost: ", "Bedel: ") + cost + "  ·  " + (can ? Loc.T("click to research", "araştırmak için tıkla")
-                                                                         : Loc.T("not enough data", "veri yetersiz"));
+            status = (can ? "" : Loc.T("NEED ", "GEREKLİ: ")) + cost + Loc.T(" DATA", " VERİ");
             sc = can ? Lab.DataColor : Danger;
         }
         labTipStatus.text = status;
@@ -1155,42 +1139,21 @@ public partial class GameUI
     void BuildPayout(VisualElement parent)
     {
         payoutBox = Box(parent);
-        payoutBox.style.marginTop = 14;
+        payoutBox.style.marginTop = 18;
         payoutBox.style.alignItems = Align.Center;
-        payoutBox.style.paddingLeft = payoutBox.style.paddingRight = 22;
-        payoutBox.style.paddingTop = payoutBox.style.paddingBottom = 8;
-        payoutBox.style.backgroundColor = WithAlpha(Panel, 0.75f);
-        Border(payoutBox, 1.5f, WithAlpha(Lab.DataColor, 0.45f));
-        Radius(payoutBox, 12);
-
-        var lines = Row(payoutBox);
-        lines.style.alignItems = Align.Center;
-        var el = Row(lines);
-        payoutElement = Text(el, "", 15, true, Dim);
-        payoutElementGain = Text(el, "", 17, true, Lab.DataColor);
-        payoutElementGain.style.marginLeft = 8;
-        var lv = Row(lines);
-        lv.style.marginLeft = 26;
-        payoutLevel = Text(lv, "", 15, true, Dim);
-        payoutLevelGain = Text(lv, "", 17, true, Lab.DataColor);
-        payoutLevelGain.style.marginLeft = 8;
-        payoutBonus = Text(lines, "", 15, true, Lab.DataColor);
-        payoutBonus.style.marginLeft = 26;
 
         payoutTotalRow = Row(payoutBox);
         payoutTotalRow.style.alignItems = Align.Center;
-        payoutTotalRow.style.marginTop = 4;
         Icon(payoutTotalRow, ProcSprites.DataChip, 30, Lab.DataColor);
         payoutTotal = Text(payoutTotalRow, "", 30, true, Lab.DataColor);
         payoutTotal.style.marginLeft = 8;
-        var word = Text(payoutTotalRow, Loc.T("RESEARCH DATA", "ARAŞTIRMA VERİSİ"), 15, true, Lab.DataColor);
+        var word = Text(payoutTotalRow, Loc.T("DATA", "VERİ"), 15, true, Lab.DataColor);
         word.style.marginLeft = 10;
         word.style.letterSpacing = 3;
 
         payoutNote = Text(payoutBox, "", 14, true, Pickup.Gold);
         payoutNote.style.letterSpacing = 2;
-        payoutBank = Text(payoutBox, "", 14, false, Dim);
-        payoutBank.style.marginTop = 2;
+        payoutNote.style.marginTop = 4;
     }
 
     void UpdatePayout()
@@ -1200,37 +1163,21 @@ public partial class GameUI
         if (payoutShownVersion != gm.PayoutVersion) { payoutShownVersion = gm.PayoutVersion; payoutTicked = 0; }
         float t = gm.StateTime;
 
-        int z = p.atomicNumber;
-        string el = z > 0 ? Elements.Name(z) + " (" + z + ")" : "—";
-        payoutElement.text = Loc.T("HIGHEST ELEMENT  ", "EN YÜKSEK ELEMENT  ") + el;
-        payoutElementGain.text = "+" + z;
-        payoutLevel.text = Loc.T("LEVEL ", "SEVİYE ") + p.level + "  ×2";
-        payoutLevelGain.text = "+" + 2 * p.level;
-        payoutBonus.text = p.bonus > 0.001f ? Loc.T("ANALYSIS ", "ANALİZ ") + Loc.Pct(p.bonus) : "";
-        payoutElement.parent.style.opacity = Mathf.Clamp01((t - 0.9f) / 0.25f);
-        payoutLevel.parent.style.opacity = Mathf.Clamp01((t - 1.25f) / 0.25f);
-        payoutBonus.style.opacity = Mathf.Clamp01((t - 1.6f) / 0.25f);
-
         // The total counts up into the bank.
-        float k = Mathf.Clamp01((t - 1.8f) / 0.9f);
+        const float From = 0.9f;
+        float k = Mathf.Clamp01((t - From) / 0.9f);
         int shown = Mathf.RoundToInt(p.gain * (1f - (1f - k) * (1f - k)));
-        payoutTotalRow.style.opacity = t >= 1.8f ? 1f : 0f;
+        payoutTotalRow.style.opacity = t >= From ? 1f : 0f;
         payoutTotal.text = "+" + shown;
-        if (shown > payoutTicked && t >= 1.8f)
+        if (shown > payoutTicked && t >= From)
         {
             if (shown / 3 > payoutTicked / 3 || shown == p.gain) Sfx.Play("lock", 0.5f);
             payoutTicked = shown;
             if (shown == p.gain) Sfx.Play("coin", 0.9f);
         }
-        float pop = k >= 1f ? 1f + 0.25f * Mathf.Clamp01(1f - (t - 2.7f) / 0.3f) : 1f;
+        float pop = k >= 1f ? 1f + 0.25f * Mathf.Clamp01(1f - (t - From - 0.9f) / 0.3f) : 1f;
         payoutTotal.style.scale = new Scale(new Vector3(pop, pop, 1f));
 
-        bool done = t >= 2.75f;
-        string note = "";
-        if (done && p.record) note = Loc.T("NEW RECORD", "YENİ REKOR");
-        else if (done && p.gain < p.value) note = Loc.T("Already recorded this run: ", "Bu oyundan zaten kaydedilen: ") + (p.value - p.gain);
-        payoutNote.text = note;
-        payoutNote.style.color = p.record ? Pickup.Gold : Dim;
-        payoutBank.text = done ? Loc.T("In the Lab: ", "Laboratuvarda: ") + p.bank : "";
+        payoutNote.text = t >= From + 0.95f && p.record ? Loc.T("NEW RECORD", "YENİ REKOR") : "";
     }
 }

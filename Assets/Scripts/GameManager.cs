@@ -58,7 +58,9 @@ public partial class GameManager : MonoBehaviour
         Regeneration,              // rare
         Spaceship,                 // character
         FireRate, TurretRange,     // normal, only with the Spaceship
-        Insight, CoinRecycler, HealthRecycler   // rare
+        Insight, CoinRecycler, HealthRecycler,  // rare
+        Conductive,                             // character
+        HopRange, HopCount, ChargeRate          // normal, only with the Conductive
     }
 
     /// <summary>
@@ -69,7 +71,7 @@ public partial class GameManager : MonoBehaviour
     public enum UpgradeTier { Normal, Rare, Character }
 
     /// <summary>The run's Character (at most one per run). Values are saved, so only append.</summary>
-    public enum Character { None = 0, Challenger = 1, Sluggish = 2, Spaceship = 3 }
+    public enum Character { None = 0, Challenger = 1, Sluggish = 2, Spaceship = 3, Conductive = 4 }
 
     [Header("Rules")]
     [Tooltip("Base max health (before upgrades).")]
@@ -325,7 +327,8 @@ public partial class GameManager : MonoBehaviour
         {
             case UpgradeType.Challenger:
             case UpgradeType.Sluggish:
-            case UpgradeType.Spaceship: return UpgradeTier.Character;
+            case UpgradeType.Spaceship:
+            case UpgradeType.Conductive: return UpgradeTier.Character;
             case UpgradeType.Regeneration:
             case UpgradeType.Insight:
             case UpgradeType.CoinRecycler:
@@ -338,7 +341,8 @@ public partial class GameManager : MonoBehaviour
     /// <summary>The Character card that gives this Character.</summary>
     public static UpgradeType CharacterCard(Character c) =>
         c == Character.Challenger ? UpgradeType.Challenger
-        : c == Character.Sluggish ? UpgradeType.Sluggish : UpgradeType.Spaceship;
+        : c == Character.Sluggish ? UpgradeType.Sluggish
+        : c == Character.Conductive ? UpgradeType.Conductive : UpgradeType.Spaceship;
 
     // ------------------------------------------------------------- orbitals
 
@@ -569,6 +573,7 @@ public partial class GameManager : MonoBehaviour
         upgFireRate = upgTurretRange = 0;
         upgInsight = upgCoinRecycler = upgHealthRecycler = 0;
         coinRecycleProgress = heartRecycleProgress = 0;
+        ResetTraits();
         character = Character.None;
         upgOrbitals = Lab.Level(LabPerk.StartOrbital);   // Lab: start with New Orbitals
         ApplyUpgrades();
@@ -620,7 +625,7 @@ public partial class GameManager : MonoBehaviour
             1f + upgSpeed * thrustPerUpgrade,
             upgTorque * torquePerUpgrade,
             upgTorque * turnAuthorityPerTorque,
-            character == Character.Challenger ? 0 : upgBallArmor);
+            character == Character.Challenger || character == Character.Conductive ? 0 : upgBallArmor);
         pendulum.ApplyExtraUpgrades(
             1f + upgBallSize * ballSizePerUpgrade,
             upgPickupRange * pickupRangePerUpgrade,
@@ -672,7 +677,7 @@ public partial class GameManager : MonoBehaviour
         // Extras.
         extras = new List<UpgradeType>();
         // Ball Armor: only if one is banked (one per N levels), under the cap, and balls exist at all.
-        if (character != Character.Challenger && BallArmorBanked > 0) extras.Add(UpgradeType.BallArmor);
+        if (character != Character.Challenger && character != Character.Conductive && BallArmorBanked > 0) extras.Add(UpgradeType.BallArmor);
         if (character != Character.Challenger && upgBallSize < maxBallSizeUpgrades) extras.Add(UpgradeType.BallSize);
         if (upgPickupRange < maxPickupRangeUpgrades) extras.Add(UpgradeType.PickupRange);
         if (upgRepel < maxRepelUpgrades) extras.Add(UpgradeType.Repel);
@@ -681,6 +686,12 @@ public partial class GameManager : MonoBehaviour
         {
             if (upgFireRate < maxFireRateUpgrades) extras.Add(UpgradeType.FireRate);
             if (upgTurretRange < maxTurretRangeUpgrades) extras.Add(UpgradeType.TurretRange);
+        }
+        if (character == Character.Conductive)
+        {
+            if (upgHopRange < maxConductUpgrades) extras.Add(UpgradeType.HopRange);
+            if (upgHopCount < maxConductUpgrades) extras.Add(UpgradeType.HopCount);
+            if (upgChargeRate < maxConductUpgrades) extras.Add(UpgradeType.ChargeRate);
         }
     }
 
@@ -723,7 +734,7 @@ public partial class GameManager : MonoBehaviour
                         && choiceIndex == 0 && pendingChoices >= 2 && choiceTotal >= levelQuanta;
         if (eligible && Random.value < characterChance + Lab.CharacterChancePerLevel * Lab.Level(LabPerk.CharacterChance))
         {
-            UpgradeType[] characters = { UpgradeType.Challenger, UpgradeType.Sluggish, UpgradeType.Spaceship };
+            UpgradeType[] characters = { UpgradeType.Challenger, UpgradeType.Sluggish, UpgradeType.Spaceship, UpgradeType.Conductive };
             UpgradeType gc = characters[Random.Range(0, characters.Length)];
             if (offer.Count >= upgradeChoices)
             {
@@ -835,6 +846,20 @@ public partial class GameManager : MonoBehaviour
                 break;
             }
             case UpgradeType.Sluggish: character = Character.Sluggish; break;
+            case UpgradeType.Conductive:
+            {
+                // No Electron Binding for the Conductive: any bought is refunded as picks.
+                int refunds = upgBallArmor;
+                character = Character.Conductive;
+                upgBallArmor = 0;
+                pendingChoices += refunds;
+                refundTotal += refunds;
+                ResetConductivity();
+                break;
+            }
+            case UpgradeType.HopRange: upgHopRange = Mathf.Min(maxConductUpgrades, upgHopRange + 1); break;
+            case UpgradeType.HopCount: upgHopCount = Mathf.Min(maxConductUpgrades, upgHopCount + 1); break;
+            case UpgradeType.ChargeRate: upgChargeRate = Mathf.Min(maxConductUpgrades, upgChargeRate + 1); break;
         }
         ApplyUpgrades();
         Sfx.Play(IsCharacter(picked) ? "level" : "orb");
@@ -862,6 +887,10 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.Challenger: return Loc.T("LONELY ION", "YALNIZ İYON");
             case UpgradeType.Sluggish: return Loc.T("NOBLE ATOM", "SOY ATOM");
             case UpgradeType.Spaceship: return Loc.T("RADIANT", "IŞIYAN");
+            case UpgradeType.Conductive: return Loc.T("CONDUCTIVE", "İLETKEN");
+            case UpgradeType.HopRange: return Loc.T("ZAP RANGE", "ŞOK MENZİLİ");
+            case UpgradeType.HopCount: return Loc.T("ZAP HOPS", "ŞOK SEKMESİ");
+            case UpgradeType.ChargeRate: return Loc.T("FAST CHARGE", "HIZLI YÜKLEME");
             case UpgradeType.BallSize: return Loc.T("BIGGER ELECTRONS", "BÜYÜK ELEKTRONLAR");
             case UpgradeType.PickupRange: return Loc.T("PICKUP RANGE", "TOPLAMA MENZİLİ");
             case UpgradeType.Repel: return Loc.T("REPEL", "İTME");
@@ -932,6 +961,15 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.FireRate: return Loc.Pct(fireRatePerUpgrade) + Loc.T(" emission rate", " yayım hızı");
             case UpgradeType.TurretRange:
                 return "+" + turretRangePerUpgrade.ToString("0.#") + Loc.T(" radiation range", " radyasyon menzili");
+            case UpgradeType.Conductive:
+                return Loc.T("Builds charge over time\nHit electrons become zaps\nNo Electron Binding",
+                             "Zamanla yük biriktirir\nVurulan elektron şoka dönüşür\nElektron Bağı yok")
+                     + (upgBallArmor > 0 ? Loc.T("\n+" + upgBallArmor + " picks refunded", "\n+" + upgBallArmor + " seçim iadesi") : "");
+            case UpgradeType.HopRange:
+                return "+" + zapRangePerUpgrade.ToString("0.#") + Loc.T(" zap range", " şok menzili");
+            case UpgradeType.HopCount: return Loc.T("+1 zap hop", "+1 şok sekmesi");
+            case UpgradeType.ChargeRate:
+                return "−" + conductTickPerUpgrade.ToString("0.#") + Loc.T(" s per charge", " sn yükleme süresi");
             default: return Loc.T("Electrons survive\n+1 more hit", "Elektronlar bir darbeye\ndaha dayanır");
         }
     }
@@ -975,6 +1013,10 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.Challenger: return character == Character.Challenger ? 1 : 0;
             case UpgradeType.Sluggish: return character == Character.Sluggish ? 1 : 0;
             case UpgradeType.Spaceship: return character == Character.Spaceship ? 1 : 0;
+            case UpgradeType.Conductive: return character == Character.Conductive ? 1 : 0;
+            case UpgradeType.HopRange: return upgHopRange;
+            case UpgradeType.HopCount: return upgHopCount;
+            case UpgradeType.ChargeRate: return upgChargeRate;
             default: return 0;
         }
     }
@@ -1009,6 +1051,9 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.Booster: cap = maxBoosterUpgrades; return true;
             case UpgradeType.FireRate: cap = maxFireRateUpgrades; return true;
             case UpgradeType.TurretRange: cap = maxTurretRangeUpgrades; return true;
+            case UpgradeType.HopRange:
+            case UpgradeType.HopCount:
+            case UpgradeType.ChargeRate: cap = maxConductUpgrades; return true;
             default: cap = 0; return false;
         }
     }
@@ -1035,6 +1080,10 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.Spaceship: return new Color(0.8f, 1f, 0.35f);
             case UpgradeType.FireRate: return new Color(1f, 0.5f, 0.45f);
             case UpgradeType.TurretRange: return new Color(0.55f, 1f, 0.85f);
+            case UpgradeType.Conductive: return ConductiveColor;
+            case UpgradeType.HopRange: return new Color(0.6f, 0.95f, 1f);
+            case UpgradeType.HopCount: return new Color(1f, 0.78f, 0.4f);
+            case UpgradeType.ChargeRate: return new Color(1f, 0.95f, 0.65f);
             default: return Pickup.OrbColor;
         }
     }
@@ -1044,6 +1093,7 @@ public partial class GameManager : MonoBehaviour
     void SetState(State s)
     {
         if (s != State.Playing && abilityAiming) EndAbilityAim(false);
+        if (s != State.Playing && s != State.Paused) AlkaliShot.ReturnAll();   // a thrown electron rejoins at once
         state = s;
         stateTime = 0f;
     }
@@ -1073,6 +1123,8 @@ public partial class GameManager : MonoBehaviour
         teaching = false;
         if (abilityAiming) EndAbilityAim(false);   // the level sets the time scale itself
         abilityCooldown = 0f;
+        AlkaliShot.ReturnAll();
+        if (hardReset) ResetConductivity();
         // Quanta for this level; the ones earned last level (a filled energy level) are new.
         levelQuanta = CoinsPerLevel;
         newQuanta = character == Character.Challenger ? 0 : Mathf.Min(pendingNewQuanta, levelQuanta);
@@ -1339,7 +1391,6 @@ public partial class GameManager : MonoBehaviour
             else
             {
                 Sfx.Play("recycle");
-                GameUI.FloatText(at, heartRecycleProgress + " / " + OrbsPerRecycledHeart, Pickup.HeartColor);
             }
         }
         else if (HasCoinRecycler)
@@ -1356,7 +1407,6 @@ public partial class GameManager : MonoBehaviour
             else
             {
                 Sfx.Play("recycle");
-                GameUI.FloatText(at, coinRecycleProgress + " / " + OrbsPerRecycledCoin, Pickup.CoinColor);
             }
         }
     }
@@ -1365,9 +1415,6 @@ public partial class GameManager : MonoBehaviour
     public void WarnOrbitalsFull(Vector2 at)
     {
         Sfx.Play("full", 0.7f);
-        string text = pendulum != null && pendulum.Capacity == 0 ? Loc.T("NO ORBITALS", "ORBİTAL YOK")
-                                                                 : Loc.T("ORBITALS FULL", "ORBİTALLER DOLU");
-        GameUI.FloatText(at, text, new Color(1f, 0.25f, 0.25f), 24f);
     }
 
     void OnPickupCollected(Pickup p)
@@ -1451,7 +1498,7 @@ public partial class GameManager : MonoBehaviour
             lives = 1;
             pendulum.SecondWind(2f);
             hitStop = 0.25f;
-            GameUI.Announce(Loc.T("SECOND WIND", "İKİNCİ NEFES"), Loc.T("The core held together!", "Çekirdek dağılmadı!"), Color.white, 2f);
+            GameUI.Announce(Loc.T("SECOND WIND", "İKİNCİ NEFES"), Color.white, 2f);
             return;
         }
         if (lives <= 0) EndGame();
@@ -1471,7 +1518,7 @@ public partial class GameManager : MonoBehaviour
     void CheckEnergyLevels()
     {
         if (pendulum == null || character == Character.Challenger) return;
-        int electrons = pendulum.BallCount + pendulum.TurretCount;
+        int electrons = pendulum.ElectronTotal;
         int full = 0, total = 0;
         while (total + Elements.ShellSize(full) <= electrons) { total += Elements.ShellSize(full); full++; }
         if (full <= shellsFilled) return;
@@ -1493,9 +1540,7 @@ public partial class GameManager : MonoBehaviour
         }
         else
         {
-            GameUI.Announce(Loc.T("ENERGY LEVEL COMPLETE", "ENERJİ SEVİYESİ TAMAMLANDI"),
-                            Loc.T("+1 quantum every level, from the next one", "Sonraki seviyeden itibaren her seviyede +1 kuanta"),
-                            Pickup.CoinColor, 2.6f);
+            GameUI.Announce(Loc.T("ENERGY LEVEL COMPLETE", "ENERJİ SEVİYESİ TAMAMLANDI"), Pickup.CoinColor, 2.6f);
         }
     }
 
@@ -1541,8 +1586,9 @@ public partial class GameManager : MonoBehaviour
                 UpdateHearts(Time.deltaTime);
                 UpdateNeutrinoPickup(Time.deltaTime);
                 CheckEnergyLevels();
+                UpdateTraits(Time.deltaTime);
                 if (character != Character.Challenger)
-                    runMaxElectrons = Mathf.Max(runMaxElectrons, pendulum.BallCount + pendulum.TurretCount);
+                    runMaxElectrons = Mathf.Max(runMaxElectrons, pendulum.ElectronTotal);
                 if (PausePressed()) SetPaused(true);
                 break;
             case State.Upgrade:

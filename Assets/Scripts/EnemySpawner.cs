@@ -274,8 +274,7 @@ public class EnemySpawner : MonoBehaviour
                 rain = Rain.Warning;
                 rainClock = 0f;
                 rainSide = Random.Range(0f, 360f);
-                GameUI.Announce(Loc.T("GAMMA RAIN", "GAMA YAĞMURU"), Loc.T("Incoming radiation!", "Radyasyon geliyor!"),
-                                flashColor, gammaRainWarning);
+                GameUI.Announce(Loc.T("GAMMA RAIN", "GAMA YAĞMURU"), flashColor, gammaRainWarning);
                 Sfx.Play("charge", 0.8f);
                 break;
             case Rain.Warning:

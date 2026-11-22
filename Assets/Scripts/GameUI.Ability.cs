@@ -9,8 +9,8 @@ using UnityEngine.UIElements;
 public partial class GameUI
 {
     VisualElement abilityBox, abilityButton, abilityShade, abilityIconHolder;
-    Label abilityName, abilityHint;
-    LabPerk? shownAbility;
+    Label abilityHint;
+    GameManager.AbilityKind? shownAbility;
     float abilityReadyPop;
     bool abilityWasReady;
 
@@ -40,10 +40,6 @@ public partial class GameUI
         abilityShade.style.left = abilityShade.style.right = abilityShade.style.bottom = 0;
         abilityShade.style.backgroundColor = new Color(0f, 0f, 0.02f, 0.7f);
 
-        abilityName = Text(abilityBox, "", 12, true, Dim);
-        abilityName.style.letterSpacing = 3;
-        abilityName.style.marginTop = 4;
-
         abilityButton.RegisterCallback<PointerEnterEvent>(_ => gm.PointerOverAbilityButton = true);
         abilityButton.RegisterCallback<PointerLeaveEvent>(_ => gm.PointerOverAbilityButton = false);
         abilityButton.RegisterCallback<PointerDownEvent>(ev => { if (ev.button == 0) gm.ToggleAbilityAim(); });
@@ -54,19 +50,20 @@ public partial class GameUI
     void UpdateAbilityButton(GameManager.State st)
     {
         if (abilityBox == null) return;
-        LabPerk? ability = gm.Ability;
-        bool show = ability != null && st == GameManager.State.Playing && !gm.Teaching;
+        GameManager.AbilityKind ability = gm.Ability;
+        bool show = ability != GameManager.AbilityKind.None && st == GameManager.State.Playing && !gm.Teaching;
         Show(abilityBox, show);
         if (!show) { gm.PointerOverAbilityButton = false; return; }
 
-        bool dash = ability == LabPerk.NobleDash;
-        Color c = dash ? GameManager.DashColor : GameManager.BlastColor;
+        Color c = ability == GameManager.AbilityKind.Dash ? GameManager.DashColor
+                : ability == GameManager.AbilityKind.Blast ? GameManager.BlastColor : GameManager.AlkaliColor;
         if (shownAbility != ability)
         {
             shownAbility = ability;
             abilityIconHolder.Clear();
-            Icon(abilityIconHolder, dash ? ProcSprites.Arrow : ProcSprites.Gamma, 34, c);
-            abilityName.text = PerkName(ability.Value);
+            Sprite icon = ability == GameManager.AbilityKind.Dash ? ProcSprites.Arrow
+                        : ability == GameManager.AbilityKind.Blast ? ProcSprites.Gamma : ProcSprites.Electron;
+            Icon(abilityIconHolder, icon, 34, c);
         }
 
         bool aiming = gm.AbilityAiming, ready = gm.AbilityReady;
@@ -83,14 +80,11 @@ public partial class GameUI
         abilityIconHolder.style.opacity = ready || aiming ? 1f : 0.35f;
         float s = 1f + 0.18f * abilityReadyPop * abilityReadyPop + (aiming ? 0.06f * pulse : 0f);
         abilityButton.style.scale = new Scale(new Vector3(s, s, 1f));
-        abilityName.style.color = ready || aiming ? WithAlpha(c, 0.9f) : Dim;
 
         if (aiming)
-            abilityHint.text = (dash ? Loc.T("AIM  ·  CLICK TO DASH", "NİŞAN AL  ·  ATILMAK İÇİN TIKLA")
-                                     : Loc.T("AIM  ·  CLICK TO BLAST", "NİŞAN AL  ·  PATLATMAK İÇİN TIKLA"))
-                               + Loc.T("   ·   ESC / RIGHT CLICK CANCELS", "   ·   ESC / SAĞ TIK İPTAL");
+            abilityHint.text = Loc.T("CLICK  ·  ESC CANCEL", "TIKLA  ·  ESC İPTAL");
         else if (!gm.AbilityHasElectron)
-            abilityHint.text = Loc.T("NEEDS AN ELECTRON", "BİR ELEKTRON GEREKİR");
+            abilityHint.text = Loc.T("NO ELECTRON", "ELEKTRON YOK");
         else abilityHint.text = "";
         abilityHint.style.color = aiming ? Color.white : WithAlpha(Danger, 0.8f);
     }

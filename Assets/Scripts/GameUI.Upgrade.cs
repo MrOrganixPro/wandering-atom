@@ -332,6 +332,10 @@ public partial class GameUI
             case GameManager.UpgradeType.TurretRange: return ProcSprites.Ring;
             case GameManager.UpgradeType.FireRate:
             case GameManager.UpgradeType.Spaceship: return ProcSprites.Trefoil;
+            case GameManager.UpgradeType.Conductive:
+            case GameManager.UpgradeType.ChargeRate: return ProcSprites.Bolt;
+            case GameManager.UpgradeType.HopRange: return ProcSprites.Ring;
+            case GameManager.UpgradeType.HopCount: return ProcSprites.Link;
             default: return ProcSprites.Arrow;   // Speed
         }
     }
@@ -357,17 +361,14 @@ public partial class GameUI
         hoverPanel.style.opacity = 0f;
     }
 
-    /// <summary>"LEVEL 2 → 3" for upgrades bought repeatedly; a tag for one-off ones.</summary>
+    /// <summary>"2 → 3" for upgrades bought repeatedly; a tag for one-off ones.</summary>
     string LevelLine(GameManager.UpgradeType u)
     {
-        if (GameManager.IsCharacter(u)) return Loc.T("CHARACTER  ·  2 QUANTA", "KARAKTER  ·  2 KUANTA");
-        if (GameManager.IsRare(u)) return Loc.T("RARE  ·  ONCE PER RUN", "NADİR  ·  OYUN BAŞINA 1 KEZ");
-        if (u == GameManager.UpgradeType.Heal) return Loc.T("INSTANT", "ANINDA");
+        if (GameManager.IsCharacter(u)) return Loc.T("CHARACTER", "KARAKTER");
+        if (GameManager.IsRare(u)) return Loc.T("RARE", "NADİR");
+        if (u == GameManager.UpgradeType.Heal) return "";
         int owned = gm.OwnedCount(u);
-        string line = Loc.T("LEVEL ", "SEVİYE ") + owned + "  →  " + (owned + 1);
-        if (u != GameManager.UpgradeType.Orbital && gm.UpgradeLevels(u, out _, out int cap) && cap > 0)
-            line += Loc.T("   (MAX ", "   (EN FAZLA ") + cap + ")";
-        return line;
+        return owned + "  →  " + (owned + 1);
     }
 
     void UpdateHoverPanel(float dt)
@@ -382,6 +383,8 @@ public partial class GameUI
         if (hp >= 0 && petals[hp].mystery && gm.StateTime >= gm.MysteryOpenTime && hoverTitle.text == "???")
             FillHoverPanel(petals[hp]);
 
+        Show(hoverLevel, !string.IsNullOrEmpty(hoverLevel.text));   // no gaps for empty lines
+        Show(hoverDesc, !string.IsNullOrEmpty(hoverDesc.text));
         hoverFade = Mathf.MoveTowards(hoverFade, hp >= 0 ? 1f : 0f, dt / 0.22f);
         hoverPanel.style.opacity = hoverFade * hoverFade * (3f - 2f * hoverFade);
         Show(hoverPanel, hoverFade > 0f);
@@ -407,12 +410,10 @@ public partial class GameUI
             Border(hoverPanel, 2f, WithAlpha(can ? Pickup.NeutrinoColor : p.color, 0.8f));
             hoverTitle.text = Loc.T("LOCKED", "KİLİTLİ");
             hoverTitle.style.color = can ? Pickup.NeutrinoColor : Dim;
-            hoverLevel.text = can ? Loc.T("1 NEUTRINO", "1 NÖTRİNO") : "";
+            hoverLevel.text = "";
             hoverDesc.text = can
-                ? Loc.T("Click to spend a neutrino and open this slot, for this pick only.",
-                        "Tıklarsan bir nötrino harcanır ve bu yuva yalnızca bu seçim için açılır.")
-                : Loc.T("Finish a level without losing stability to earn a neutrino, then spend it to open this slot.",
-                        "Kararlılık kaybetmeden bir seviyeyi bitirirsen nötrino kazanırsın; onunla bu yuvayı açabilirsin.");
+                ? Loc.T("Spend 1 neutrino", "1 nötrino harca")
+                : Loc.T("Earn neutrinos: no-damage levels", "Nötrino kazan: hasarsız seviyeler");
             return;
         }
         if (p.unlockAge >= 0f && p.unlockAge < UnlockShatter)
@@ -427,8 +428,8 @@ public partial class GameUI
         {
             hoverTitle.text = "???";
             hoverTitle.style.color = CardGold;
-            hoverLevel.text = Loc.T("CHARACTER  ·  2 QUANTA", "KARAKTER  ·  2 KUANTA");
-            hoverDesc.text = Loc.T("Something is about to change...", "Bir şeyler değişmek üzere...");
+            hoverLevel.text = Loc.T("CHARACTER", "KARAKTER");
+            hoverDesc.text = "";
             return;
         }
         GameManager.UpgradeType u = gm.Offer[p.offer];

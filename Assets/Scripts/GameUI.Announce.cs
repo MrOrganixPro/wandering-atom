@@ -8,14 +8,14 @@ using UnityEngine.UIElements;
 public partial class GameUI
 {
     VisualElement announce, announceBarL, announceBarR;
-    Label announceTitle, announceSub;
+    Label announceTitle;
     float announceAge = 99f, announceLife = 1f;
 
     /// <summary>Shows a warning banner for 'duration' seconds of play.</summary>
-    public static void Announce(string title, string subtitle, Color color, float duration)
+    public static void Announce(string title, Color color, float duration)
     {
         if (instance == null || instance.announce == null) return;
-        instance.ShowAnnounce(title, subtitle, color, duration);
+        instance.ShowAnnounce(title, color, duration);
     }
 
     void BuildAnnounce()
@@ -27,9 +27,6 @@ public partial class GameUI
         announceTitle.style.letterSpacing = 8;
         announceTitle.style.marginLeft = announceTitle.style.marginRight = 22;
         announceBarR = HazardBar(row);
-        announceSub = Text(announce, "", 22, true, Color.white);
-        announceSub.style.marginTop = 6;
-        announceSub.style.letterSpacing = 4;
         Show(announce, false);
     }
 
@@ -48,11 +45,10 @@ public partial class GameUI
         return bar;
     }
 
-    void ShowAnnounce(string title, string subtitle, Color color, float duration)
+    void ShowAnnounce(string title, Color color, float duration)
     {
         announceTitle.text = title;
         announceTitle.style.color = color;
-        announceSub.text = subtitle;
         foreach (var bar in new[] { announceBarL, announceBarR })
             foreach (var chevron in bar.Children()) chevron.style.backgroundColor = color;
         announceLife = Mathf.Max(0.5f, duration);

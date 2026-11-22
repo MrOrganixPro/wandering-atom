@@ -311,6 +311,9 @@ public class EnemyMover : MonoBehaviour
 
         if (pc == null || !pc.IsAlive) return false;
         if (type == EnemyType.Flash) return CheckPierce(pc, p);
+        var gm = GameManager.Instance;
+        // Halogen: a free radical that touches the atom loses its electron to it, and is gone.
+        if (gm != null && gm.TryHalogenSteal(this)) return true;
 
         // Electron contact: both take a hit; an electron out of hits is snatched (see the class notes).
         Vector2 takenPos = p;
@@ -318,7 +321,14 @@ public class EnemyMover : MonoBehaviour
         // A positron annihilates any electron it touches, however tightly bound (armor doesn't help).
         var hit = hitCooldown <= 0f ? pc.HitElectron(p, radius, out takenPos, out takenColor, null, type == EnemyType.Missile)
                                     : PendulumController.ElectronHit.None;
-        if (hit != PendulumController.ElectronHit.None)
+        // Conductive: the electron becomes a zap instead of being taken; the zap is the damage dealt.
+        if (hit == PendulumController.ElectronHit.Taken && gm != null && gm.TryConductiveZap(takenPos, this))
+        {
+            if (dead) return true;
+            hitCooldown = 0.3f;
+            speed *= 0.85f;
+        }
+        else if (hit != PendulumController.ElectronHit.None)
         {
             if (type == EnemyType.Missile)
             {
@@ -382,7 +392,12 @@ public class EnemyMover : MonoBehaviour
         if (hit != PendulumController.ElectronHit.None)
         {
             ParticleBursts.Burst(p, Color.white, 12, 6f, 0.2f, 0.3f);
-            if (hit == PendulumController.ElectronHit.Taken)   // ionized: knocked out along the ray
+            var gm = GameManager.Instance;
+            if (hit == PendulumController.ElectronHit.Taken && gm != null && gm.TryConductiveZap(takenPos, this))
+            {
+                if (dead) return true;   // Conductive: the electron zapped the ray itself
+            }
+            else if (hit == PendulumController.ElectronHit.Taken)   // ionized: knocked out along the ray
             {
                 Vector2 side = new Vector2(-moveDirection.y, moveDirection.x) * Random.Range(-2.5f, 2.5f);
                 LooseElectron.Spawn(takenPos, moveDirection * 8f + side, takenColor, ElectronSize);

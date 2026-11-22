@@ -41,7 +41,7 @@ public partial class GameUI
 
     // Upgrade screen
     VisualElement neutrinoCounter, neutrinoCounterIcon;
-    Label neutrinoCounterLabel, neutrinoCounterHint;
+    Label neutrinoCounterLabel;
     float neutrinoCounterPop;
 
     /// <summary>A gentle, uneven flicker: the ghost particle is barely there.</summary>
@@ -97,10 +97,10 @@ public partial class GameUI
         int earned = gm.LevelNeutrinos;
         if (earned <= 0) { Show(neutrinoAward, false); return; }
         Show(neutrinoAward, true);
-        // Flawless, the Lonely Ion's free one, or both.
-        neutrinoAwardWhy.text = gm.LevelFlawless && gm.IsLonelyIon ? Loc.T("FLAWLESS + LONELY ION", "KUSURSUZ + YALNIZ İYON")
-                              : gm.LevelFlawless ? Loc.T("FLAWLESS", "KUSURSUZ") : Loc.T("LONELY ION", "YALNIZ İYON");
-        neutrinoAwardCount.text = "+" + earned + (earned == 1 ? Loc.T(" NEUTRINO", " NÖTRİNO") : Loc.T(" NEUTRINOS", " NÖTRİNO"));
+        // Only a flawless level names its reason; the Lonely Ion's free one is just counted.
+        neutrinoAwardWhy.text = gm.LevelFlawless ? Loc.T("FLAWLESS", "KUSURSUZ") : "";
+        Show(neutrinoAwardWhy, gm.LevelFlawless);
+        neutrinoAwardCount.text = "+" + earned;
         float at = 0.55f + coins * 0.25f;   // after the quanta have popped in
         float t = gm.StateTime - at;
         if (t < 0f)
@@ -135,9 +135,6 @@ public partial class GameUI
         neutrinoCounterIcon = Icon(row, ProcSprites.Neutrino, 64, Pickup.NeutrinoColor);
         neutrinoCounterLabel = Text(row, "", 30, true, Pickup.NeutrinoColor, TextAnchor.MiddleLeft);
         neutrinoCounterLabel.style.marginLeft = 2;
-        neutrinoCounterHint = Text(neutrinoCounter, Loc.T("Click a locked slot to open it", "Açmak için kilitli bir yuvaya tıkla"),
-                                   15, false, Dim, TextAnchor.MiddleLeft);
-        neutrinoCounterHint.style.marginLeft = 10;
         Show(neutrinoCounter, false);
     }
 
@@ -153,7 +150,6 @@ public partial class GameUI
         float s = 1f + 0.3f * neutrinoCounterPop * neutrinoCounterPop;
         neutrinoCounterIcon.style.scale = new Scale(new Vector3(s, s, 1f));
         neutrinoCounterIcon.style.opacity = n > 0 ? GhostFlicker(Time.unscaledTime, 0.4f) : 0.25f;
-        neutrinoCounterHint.style.opacity = n > 0 && PetalsLive ? 1f : 0f;
     }
 
     /// <summary>A locked petal was clicked: spend a neutrino on it, if there is one to spend.</summary>

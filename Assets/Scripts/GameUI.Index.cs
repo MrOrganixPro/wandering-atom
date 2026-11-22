@@ -38,12 +38,12 @@ public partial class GameUI
     static readonly Color PodColor = new Color(0.9f, 0.82f, 0.62f);
 
     VisualElement indexScreen, indexGrid, detailIconHolder, previewBox;
-    Label detailName, detailTag, detailDesc, detailAttack, detailAttackNote;
+    Label detailName, detailTag, detailDesc, detailAttack;
     VisualElement detailAttackRow;
 
     // Hovering the attack badge: a small panel explaining that kind of attack.
     VisualElement attackTip;
-    Label attackTipTitle, attackTipBody, attackTipHint;
+    Label attackTipTitle, attackTipBody;
     Attack shownAttack;
     bool attackTipHover;
     float attackTipFade;
@@ -99,32 +99,25 @@ public partial class GameUI
 
         list.Add(new Entry { id = Codex.Enemy(EnemyType.Shard), sprite = ProcSprites.Shard, color = shard, demo = Demo.Shard, attack = Attack.Ionizing,
             name = Loc.T("FREE RADICAL", "SERBEST RADİKAL"),
-            desc = Loc.T("A reactive fragment with one unpaired electron. Flies straight at you, sometimes in cosmic ray showers. It bonds with the first electron it touches and carries it off.",
-                         "Eşleşmemiş tek bir elektron taşıyan, tepkimeye hazır bir parça. Doğruca üstüne uçar; bazen kozmik ışın sağanaklarıyla birlikte gelir. Dokunduğu ilk elektronla bağ kurar ve onu alıp götürür.") });
+            desc = Loc.T("Flies straight at you and steals an electron.", "Doğruca üstüne uçar ve bir elektron çalar.") });
         list.Add(new Entry { id = Codex.Enemy(EnemyType.Brute), sprite = ProcSprites.Alpha, color = brute, demo = Demo.Brute, attack = Attack.Ionizing,
             name = Loc.T("ALPHA PARTICLE", "ALFA PARÇACIĞI"),
-            desc = Loc.T("Two protons, two neutrons: heavy and slow, and it shoves you twice as hard. It grows bigger every level. It snatches an electron and keeps coming; with a second one it becomes helium and leaves.",
-                         "İki proton ve iki nötrondan oluşur. Ağır ve yavaştır ama seni iki kat sert iter. Her seviyede biraz daha büyür. Bir elektron kapsa da üstüne gelmeyi sürdürür; ikincisini de kaptığında helyuma dönüşüp uzaklaşır.") });
+            desc = Loc.T("Slow, heavy, grows each level. Takes 2 electrons.", "Yavaş, ağır, her seviyede büyür. 2 elektron alır.") });
         list.Add(new Entry { id = Codex.Enemy(EnemyType.Missile), sprite = ProcSprites.Positron, color = missile, demo = Demo.Missile, attack = Attack.Destructive,
             name = Loc.T("POSITRON", "POZİTRON"),
-            desc = Loc.T("Antimatter. Its opposite charge pulls it after you, until you slip behind it. When it catches an electron, however tightly bound, the two circle each other as positronium, then annihilate in a flash. A Repel blast breaks its pull.",
-                         "Antimadde. Zıt yükü yüzünden peşine düşer; ancak arkasına geçersen seni bırakır. Bir elektron yakaladığında, bağı ne kadar sıkı olursa olsun, ikisi pozitronyum olarak birbirinin çevresinde döner, ardından bir parlamayla yok olurlar. İtme patlaması bu çekimi kırar.") });
+            desc = Loc.T("Homes in on you. Slip behind it to lose it.", "Peşine düşer. Arkasına geçip kurtul.") });
         list.Add(new Entry { id = Codex.Enemy(EnemyType.Flash), sprite = ProcSprites.Gamma, color = flash, demo = Demo.Flash, attack = Attack.Ionizing,
             name = Loc.T("GAMMA RAY", "GAMA IŞINI"),
-            desc = Loc.T("Appears at the edge and aims. When the line locks, it strikes once at light speed, piercing up to 3 targets and knocking electrons out. Sometimes they come as a Gamma Rain. Move!",
-                         "Kenarda belirir ve nişan alır. Çizgi kilitlendiğinde ışık hızında tek bir kez vurur; 3 hedefe kadar delip geçer ve elektronları koparır. Bazen Gama Yağmuru hâlinde gelirler. Kaç!") });
+            desc = Loc.T("Aims, then strikes in a line. Move!", "Nişan alır, sonra bir çizgide vurur. Kaç!") });
         list.Add(new Entry { id = Codex.Enemy(EnemyType.Broken), sprite = ProcSprites.Isotope, color = broken, demo = Demo.Broken, attack = Attack.Ionizing,
             name = Loc.T("UNSTABLE ISOTOPE", "KARARSIZ İZOTOP"),
-            desc = Loc.T("Each decay flings it toward where you just were, weaker every time, until it turns stable and drifts. Keep moving! Its first hit shakes an electron loose; its second takes one with it.",
-                         "Her bozunmada az önce bulunduğun yere doğru fırlar, ama her seferinde biraz daha zayıf. Sonunda kararlı hâle gelir ve sürüklenip gider. Durma! İlk çarpması bir elektronunu koparır; ikincisi bir elektronu da beraberinde götürür.") });
+            desc = Loc.T("Leaps to where you just were. Keep moving!", "Az önce olduğun yere fırlar. Durma!") });
         list.Add(new Entry { id = Codex.Hazard(HazardType.Asteroid), sprite = ProcSprites.Asteroid(0), color = RockColor, demo = Demo.Asteroid, attack = Attack.Ionizing,
             name = Loc.T("DUST GRAIN", "TOZ TANESİ"),
-            desc = Loc.T("To an atom, a mountain. Unbreakable: crushes enemies, chips your electrons and bounces you away.",
-                         "Bir atom için koca bir dağ. Kırılmaz; düşmanları ezer, elektronlarını aşındırır ve seni savurur.") });
+            desc = Loc.T("Unbreakable. Crushes enemies, bounces you.", "Kırılmaz. Düşmanları ezer, seni savurur.") });
         list.Add(new Entry { id = Codex.Hazard(HazardType.GravityWell), sprite = ProcSprites.Ring, color = WellColor, demo = Demo.Well, attack = Attack.Destructive,
             name = Loc.T("BLACK HOLE", "KARA DELİK"),
-            desc = Loc.T("Pulls everything in, harder near the core. Any electron that falls into the core is gone, however tightly bound.",
-                         "Her şeyi içine çeker; merkezine yaklaştıkça çekimi artar. Merkezine düşen elektron, bağı ne kadar sıkı olursa olsun yok olur.") });
+            desc = Loc.T("Pulls everything in. Its core destroys electrons.", "Her şeyi çeker. Merkezi elektronları yok eder.") });
         return list;
     }
 
@@ -194,9 +187,6 @@ public partial class GameUI
         detailAttack.pickingMode = PickingMode.Position;
         detailAttack.RegisterCallback<PointerEnterEvent>(_ => attackTipHover = true);
         detailAttack.RegisterCallback<PointerLeaveEvent>(_ => attackTipHover = false);
-        detailAttackNote = Text(detailAttackRow, "", 14, false, Dim, TextAnchor.MiddleCenter, true);
-        detailAttackNote.style.marginTop = 4;
-        detailAttackNote.style.maxWidth = 420;
         detailDesc = Text(detail, "", 18, false, new Color(1f, 1f, 1f, 0.85f), TextAnchor.UpperCenter, true);
         detailDesc.style.marginTop = 8;
         detailDesc.style.maxWidth = 420;
@@ -359,7 +349,7 @@ public partial class GameUI
         attackTip = Box(indexScreen);
         attackTip.pickingMode = PickingMode.Ignore;
         attackTip.style.position = Position.Absolute;
-        attackTip.style.width = 330;
+        attackTip.style.width = 260;
         attackTip.style.paddingLeft = attackTip.style.paddingRight = 16;
         attackTip.style.paddingTop = attackTip.style.paddingBottom = 12;
         attackTip.style.backgroundColor = WithAlpha(Panel, 0.97f);
@@ -368,8 +358,6 @@ public partial class GameUI
         attackTipTitle.style.letterSpacing = 2;
         attackTipBody = Text(attackTip, "", 15, false, WithAlpha(Color.white, 0.9f), TextAnchor.UpperLeft, true);
         attackTipBody.style.marginTop = 6;
-        attackTipHint = Text(attackTip, "", 14, true, Dim, TextAnchor.UpperLeft, true);
-        attackTipHint.style.marginTop = 8;
         attackTip.style.opacity = 0f;
         Show(attackTip, false);
     }
@@ -382,13 +370,8 @@ public partial class GameUI
         attackTipTitle.style.color = c;
         attackTipTitle.text = ion ? Loc.T("IONIZING", "İYONLAŞTIRICI") : Loc.T("DESTRUCTIVE", "YOK EDİCİ");
         attackTipBody.text = ion
-            ? Loc.T("Every electron holds on with its binding: 1 hit at first, more with each Electron Binding upgrade. Each hit from these uses one up; a hit with no binding left knocks the electron out of your atom (that is ionization).",
-                    "Her elektron bağıyla tutunur: başta 1 vuruş, her Elektron Bağı geliştirmesiyle daha fazla. Bunların her vuruşu bağdan birini harcar; bağı kalmamış bir elektrona gelen vuruş onu atomundan koparır (buna iyonlaşma denir).")
-            : Loc.T("Binding doesn't protect against these. Any electron they reach is destroyed in one go, however many Electron Binding upgrades you have.",
-                    "Bağ bunlara karşı korumaz. Ulaştıkları her elektron, kaç Elektron Bağı geliştirmen olursa olsun, tek seferde yok olur.");
-        attackTipHint.text = ion
-            ? Loc.T("Counter: Electron Binding upgrades.", "Karşı önlem: Elektron Bağı geliştirmeleri.")
-            : Loc.T("Counter: keep your electrons away from them.", "Karşı önlem: elektronlarını onlardan uzak tut.");
+            ? Loc.T("Each hit wears down binding.", "Her vuruş bağı aşındırır.")
+            : Loc.T("Ignores binding. Destroys electrons.", "Bağı hiçe sayar. Elektronları yok eder.");
     }
 
     void UpdateAttackTip()
@@ -404,8 +387,8 @@ public partial class GameUI
         {
             Vector2 c = indexScreen.WorldToLocal(new Vector2(r.center.x, r.yMax));
             float w = indexScreen.layout.width;
-            float x = c.x - 165f;
-            if (!float.IsNaN(w) && w > 0f) x = Mathf.Clamp(x, 8f, w - 338f);
+            float x = c.x - 130f;
+            if (!float.IsNaN(w) && w > 0f) x = Mathf.Clamp(x, 8f, w - 268f);
             attackTip.style.left = x;
             attackTip.style.top = c.y + 8f;
         }
@@ -427,11 +410,6 @@ public partial class GameUI
         detailAttack.style.color = c;
         detailAttack.style.backgroundColor = WithAlpha(c, 0.16f);
         Border(detailAttack, 1.5f, WithAlpha(c, 0.7f));
-        detailAttackNote.text = ion
-            ? Loc.T("Each hit loosens an electron's binding; once none is left, the electron is knocked out.",
-                    "Her vuruş bir elektronun bağını gevşetir; bağı kalmayınca elektron kopar.")
-            : Loc.T("Ignores binding: any electron it reaches is destroyed at once.",
-                    "Bağı hiçe sayar: ulaştığı her elektronu anında yok eder.");
     }
 
     void UpdateIndex(GameManager.State st)

@@ -7,6 +7,8 @@ using UnityEngine.InputSystem;
 ///    distance the way you aim, untouchable on the way and for a moment after.
 ///  - Electroblast: burns the outermost electron into a huge ray to the edge of the screen
 ///    that vaporizes every enemy in it and shoves dust and black holes away.
+/// And the alkali metal's (plain atom, see GameManager.Traits): its outermost electron is thrown
+/// at the aimed point, explodes there and comes back (AlkaliShot).
 /// Used from the HUD button: time stops, the mouse aims (a preview shows what will happen),
 /// a click fires, Esc / right click / the button again cancels without spending anything.
 /// </summary>
@@ -31,16 +33,42 @@ public partial class GameManager
     int aimStartFrame;
     float abilityCooldown;
     Vector2 aimDir = Vector2.right;
+    float aimDistance;
     AbilityAim aimFx;
 
-    /// <summary>The ability this run's atom brings (only the Noble Atom has one), or null.</summary>
-    public LabPerk? Ability => character == Character.Sluggish ? Lab.NobleAbility : null;
+    public enum AbilityKind { None, Dash, Blast, Throw }
+
+    /// <summary>
+    /// The ability the atom has right now: the Noble Atom's (equipped in the Lab), or an alkali
+    /// metal's electron throw while the plain atom is one.
+    /// </summary>
+    public AbilityKind Ability
+    {
+        get
+        {
+            if (character == Character.Sluggish)
+                return Lab.NobleAbility == LabPerk.NobleDash ? AbilityKind.Dash
+                     : Lab.NobleAbility == LabPerk.NobleBlast ? AbilityKind.Blast : AbilityKind.None;
+            return IsAlkali ? AbilityKind.Throw : AbilityKind.None;
+        }
+    }
     public bool AbilityAiming => abilityAiming;
-    /// <summary>1 right after use, 0 when ready again.</summary>
-    public float AbilityCooldown01 =>
-        Ability == null ? 0f : Mathf.Clamp01(abilityCooldown / Mathf.Max(0.01f, Ability == LabPerk.NobleDash ? dashCooldown : blastCooldown));
+    float AbilityCooldownTime(AbilityKind k) =>
+        k == AbilityKind.Dash ? dashCooldown : k == AbilityKind.Blast ? blastCooldown : alkaliCooldown;
+    /// <summary>1 right after use (or while the alkali electron is out), 0 when ready again.</summary>
+    public float AbilityCooldown01
+    {
+        get
+        {
+            AbilityKind k = Ability;
+            if (k == AbilityKind.None) return 0f;
+            if (k == AbilityKind.Throw && AlkaliShot.Out) return 1f;
+            return Mathf.Clamp01(abilityCooldown / Mathf.Max(0.01f, AbilityCooldownTime(k)));
+        }
+    }
     public bool AbilityHasElectron => pendulum != null && pendulum.BallCount > 0;
-    public bool AbilityReady => Ability != null && abilityCooldown <= 0f && AbilityHasElectron
+    public bool AbilityReady => Ability != AbilityKind.None && abilityCooldown <= 0f && AbilityHasElectron
+                                && !(Ability == AbilityKind.Throw && AlkaliShot.Out)
                                 && state == State.Playing && !teaching;
     /// <summary>Set by GameUI while the pointer is over the ability button (its own click toggles aiming).</summary>
     public bool PointerOverAbilityButton { get; set; }
@@ -68,8 +96,8 @@ public partial class GameManager
     /// <summary>While frozen: follow the pointer, then fire on a click or cancel.</summary>
     void UpdateAbilityAim()
     {
-        LabPerk? ability = Ability;
-        if (ability == null || pendulum == null || !AbilityHasElectron) { EndAbilityAim(); return; }
+        AbilityKind ability = Ability;
+        if (ability == AbilityKind.None || pendulum == null || !AbilityHasElectron) { EndAbilityAim(); return; }
 
         Vector2 origin = pendulum.PivotPosition;
         var pointer = Pointer.current;
@@ -79,11 +107,13 @@ public partial class GameManager
             Vector2 w = cam.ScreenToWorldPoint(new Vector3(sp.x, sp.y, -camZ));
             Vector2 d = w - origin;
             if (d.sqrMagnitude > 0.04f) aimDir = d.normalized;
+            aimDistance = Mathf.Min(d.magnitude, alkaliThrowRange);
         }
 
-        bool dash = ability == LabPerk.NobleDash;
-        if (dash) aimFx.ShowDash(origin, origin + aimDir * dashDistance, pendulum.BallCount, DashColor);
-        else aimFx.ShowBlast(origin, aimDir, BlastLength, blastWidth, BlastColor);
+        Vector2 throwTo = origin + aimDir * aimDistance;
+        if (ability == AbilityKind.Dash) aimFx.ShowDash(origin, origin + aimDir * dashDistance, pendulum.BallCount, DashColor);
+        else if (ability == AbilityKind.Blast) aimFx.ShowBlast(origin, aimDir, BlastLength, blastWidth, BlastColor);
+        else aimFx.ShowThrow(origin, throwTo, alkaliBlastRadius, AlkaliColor);
 
         if (Time.frameCount == aimStartFrame) return;   // the click that opened it
         var kb = Keyboard.current;
@@ -97,12 +127,23 @@ public partial class GameManager
         if (pointer != null && pointer.press.wasPressedThisFrame && !PointerOverAbilityButton)
         {
             EndAbilityAim();
-            if (dash) FireDash(origin); else FireBlast(origin);
+            if (ability == AbilityKind.Dash) FireDash(origin);
+            else if (ability == AbilityKind.Blast) FireBlast(origin);
+            else FireThrow(throwTo);
             PendulumController.SuppressInputFrame = Time.frameCount;   // this click doesn't also grab the thruster
         }
     }
 
     float BlastLength => HalfExtents.magnitude * 2.2f;   // past the edge of the screen from anywhere on it
+
+    /// <summary>Alkali metal: the outermost electron flies to 'to', explodes and comes back.</summary>
+    void FireThrow(Vector2 to)
+    {
+        if (!pendulum.ThrowOutermost(out Vector2 from)) return;
+        AlkaliShot.Launch(from, to, this);
+        abilityCooldown = alkaliCooldown;
+        Sfx.Play("boost", 0.6f);
+    }
 
     void FireDash(Vector2 from)
     {
@@ -246,6 +287,22 @@ public class AbilityAim : MonoBehaviour
         ghostRing.transform.position = to;
         ghostRing.transform.localScale = Vector3.one * (1.2f + 0.15f * pulse);
         ghostRing.color = new Color(1f, 1f, 1f, 0.6f * pulse);
+    }
+
+    /// <summary>Alkali throw: a line to the aimed point and the blast circle there.</summary>
+    public void ShowThrow(Vector2 from, Vector2 to, float blastRadius, Color c)
+    {
+        gameObject.SetActive(true);
+        float pulse = 0.6f + 0.4f * Mathf.Sin(Time.unscaledTime * 8f);
+        SetLine(path, from, to, new Color(c.r, c.g, c.b, 0.8f * pulse));
+        edgeA.enabled = edgeB.enabled = fill.enabled = false;
+        ghost.enabled = ghostRing.enabled = true;
+        ghost.transform.position = to;
+        ghost.transform.localScale = Vector3.one * blastRadius * 1.4f;
+        ghost.color = new Color(c.r, c.g, c.b, 0.18f * pulse);
+        ghostRing.transform.position = to;
+        ghostRing.transform.localScale = Vector3.one * blastRadius / 0.485f;
+        ghostRing.color = new Color(c.r, c.g, c.b, 0.7f * pulse);
     }
 
     /// <summary>Blast: the band the ray will sweep, to the edge of the screen.</summary>

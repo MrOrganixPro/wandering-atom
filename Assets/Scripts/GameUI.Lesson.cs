@@ -39,15 +39,10 @@ public partial class GameUI
 
         string q = Hi(Loc.T("+1 quantum", "+1 kuanta"), Pickup.CoinColor);
         lessonLines.Clear();
-        AddLessonLine(Loc.T("ENERGY LEVEL 1", "1. ENERJİ SEVİYESİ"), 20, true, Dim, 8);
-        AddLessonLine(Loc.T("COMPLETE", "TAMAMLANDI"), 56, true, Pickup.CoinColor, 6).style.marginBottom = 34;
-        AddLessonLine(Loc.T("Your first energy level is full of electrons.", "İlk enerji seviyen elektronlarla doldu."), 28, false, StoryInk, 0);
-        AddLessonLine(Loc.T("From the next level on, " + q + " every level,", "Sonraki seviyeden itibaren her seviyede " + q + ","), 28, false, StoryInk, 0);
-        AddLessonLine(Loc.T("for the rest of this run.", "bu oyunun sonuna kadar."), 28, false, StoryInk, 0);
-        AddLessonLine(Loc.T("Every energy level you fill adds another.", "Doldurduğun her enerji seviyesi bir tane daha ekler."), 24, false, Dim, 0)
-            .style.marginBottom = 34;
-        AddLessonLine(Loc.T("But a fuller atom pulls harder.", "Ama dolu bir atom daha güçlü çeker."), 30, true, Danger, 0);
-        AddLessonLine(Loc.T("More particles will come for you.", "Üstüne daha çok parçacık gelir."), 30, true, Danger, 0);
+        AddLessonLine(Loc.T("ENERGY LEVEL COMPLETE", "ENERJİ SEVİYESİ TAMAMLANDI"), 48, true, Pickup.CoinColor, 6).style.marginBottom = 34;
+        AddLessonLine(Loc.T(q + " every level.", "Her seviyede " + q + "."), 30, false, StoryInk, 0).style.marginBottom = 34;
+        AddLessonLine(Loc.T("A fuller atom pulls harder.", "Dolu atom daha güçlü çeker."), 30, true, Danger, 0);
+        AddLessonLine(Loc.T("More particles will come.", "Daha çok parçacık gelir."), 30, true, Danger, 0);
 
         // Bottom: the keys, as in the story.
         lessonContinue = Row(lessonScreen);

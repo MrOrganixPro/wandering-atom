@@ -595,6 +595,28 @@ public static class ProcSprites
         return new Color(1, 1, 1, AA(inside, 0.02f));
     });
 
+    /// <summary>Check mark (two thick strokes).</summary>
+    public static Sprite Check => Build("Check", 128, 128, 128f, (x, y) =>
+    {
+        float d = Mathf.Min(SegDist(x, y, -0.62f, 0.02f, -0.2f, -0.45f), SegDist(x, y, -0.2f, -0.45f, 0.65f, 0.52f));
+        return new Color(1, 1, 1, AA(0.13f - d, 0.03f));
+    });
+
+    /// <summary>Lightning bolt (zigzag, top right to bottom left).</summary>
+    public static Sprite Bolt => Build("Bolt", 128, 128, 128f, (x, y) =>
+    {
+        float d = Mathf.Min(SegDist(x, y, 0.3f, 0.85f, -0.28f, 0.02f),
+                  Mathf.Min(SegDist(x, y, -0.28f, 0.02f, 0.22f, 0.02f), SegDist(x, y, 0.22f, 0.02f, -0.3f, -0.85f)));
+        return new Color(1, 1, 1, AA(0.12f - d, 0.03f));
+    });
+
+    static float SegDist(float px, float py, float ax, float ay, float bx, float by)
+    {
+        Vector2 p = new Vector2(px, py), a = new Vector2(ax, ay), ab = new Vector2(bx, by) - a;
+        float t = Mathf.Clamp01(Vector2.Dot(p - a, ab) / ab.sqrMagnitude);
+        return Vector2.Distance(p, a + ab * t);
+    }
+
     /// <summary>Single chain link (ellipse ring, tall).</summary>
     public static Sprite Link => Build("Link", 64, 64, 64f, (x, y) =>
     {

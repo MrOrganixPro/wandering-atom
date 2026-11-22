@@ -170,9 +170,7 @@ public class Pickup : MonoBehaviour
         newTime = 0f;
         newRings = new SpriteRenderer[2];
         for (int i = 0; i < newRings.Length; i++)
-            newRings[i] = Make("NewRing" + i, ProcSprites.Ring, Color.clear, 14, radius * 3f);
-        GameUI.FloatText((Vector2)transform.position + Vector2.up * 0.9f, Loc.T("NEW", "YENİ"), color, 22f);
-    }
+            newRings[i] = Make("NewRing" + i, ProcSprites.Ring, Color.clear, 14, radius * 3f);    }
 
     void UpdateNewRings(float dt)
     {
@@ -281,7 +279,19 @@ public class Pickup : MonoBehaviour
         fullWarnCooldown -= dt;
 
         var pc = PendulumController.Instance;
-        if (pc == null || !pc.Touches(transform.position, radius)) return;
+        if (pc == null) return;
+
+        // Halogen: every electron creeps toward the atom (faster up close) and is grabbed from further away.
+        float reach = radius;
+        var halogen = GameManager.Instance;
+        if (Kind == PickupKind.Orb && halogen != null && halogen.IsHalogen)
+        {
+            Vector2 to = pc.PivotPosition - (Vector2)transform.position;
+            float d = to.magnitude;
+            if (d > 1e-3f) transform.position += (Vector3)(to / d * Mathf.Min(d, halogen.HalogenDrift(d) * dt));
+            reach += halogen.HalogenPickupExtra;
+        }
+        if (!pc.Touches(transform.position, reach)) return;
 
         // Orb with full orbitals: recycled if a Recycler can use it, otherwise it's bounced away
         // with an "Orbitals full" warning.
