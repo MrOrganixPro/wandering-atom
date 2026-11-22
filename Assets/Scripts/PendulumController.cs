@@ -851,31 +851,16 @@ public class PendulumController : MonoBehaviour
         b.vel = airVel + (b.vel - airVel) * dragFactor;
         b.pos += b.vel * h;
 
+        // Electrons always sit exactly on their energy level: never pulled out past it, never
+        // falling inward. Only the motion along the orbit is kept.
         rel = b.pos - pivot;
         d = rel.magnitude;
-        if (d >= L)
-        {
-            n = rel / d;
-            b.pos = pivot + n * L;
-            float vr = Vector2.Dot(b.vel - pivotVel, n);
-            if (vr > 0f)
-            {
-                b.vel -= n * vr;
-                b.snap = Mathf.Max(b.snap, vr);
-            }
-            b.taut = true;
-        }
-        else
-        {
-            b.taut = d > L - 0.02f;
-            if (d < minDistance)
-            {
-                n = d > 1e-4f ? rel / d : Vector2.down;
-                b.pos = pivot + n * minDistance;
-                float vr = Vector2.Dot(b.vel - pivotVel, n);
-                if (vr < 0f) b.vel -= n * vr * 1.5f;
-            }
-        }
+        n = d > 1e-4f ? rel / d : Vector2.down;
+        b.pos = pivot + n * L;
+        float vr = Vector2.Dot(b.vel - pivotVel, n);
+        if (vr > 0f) b.snap = Mathf.Max(b.snap, vr);   // a hard outward tug still flashes / sounds
+        b.vel -= n * vr;
+        b.taut = true;
         // Speed limit relative to the thruster: a fast thruster must not cap the forward-swinging balls.
         b.vel = pivotVel + Vector2.ClampMagnitude(b.vel - pivotVel, maxSpeed * Mathf.Max(1f, spinMult));
     }

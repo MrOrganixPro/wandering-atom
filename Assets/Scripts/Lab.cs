@@ -99,6 +99,25 @@ public static class Lab
 
     public static float ResearchMultiplier => 1f + ResearchPerLevel * Level(LabPerk.Research);
 
+    /// <summary>Research Data needed to buy every level of every perk.</summary>
+    public static int TotalCost
+    {
+        get
+        {
+            int total = 0;
+            foreach (var levels in Costs) foreach (int c in levels) total += c;
+            return total;
+        }
+    }
+
+    /// <summary>Dev tool: forgets every researched perk and sets the bank to exactly 'data'.</summary>
+    public static void DevReset(int data)
+    {
+        foreach (LabPerk p in System.Enum.GetValues(typeof(LabPerk))) PlayerPrefs.DeleteKey(LevelPrefix + p);
+        PlayerPrefs.DeleteKey("Pendulum_Lab_NobleEquip");
+        Data = data;   // saves
+    }
+
     // ------------------------------------------------------------- perks
 
     public static int MaxLevel(LabPerk p) => Costs[(int)p].Length;
