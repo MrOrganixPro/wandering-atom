@@ -305,7 +305,7 @@ MonoBehaviour:
   coinMinDistance: 7
   coinMaxDistance: 15
   heartChancePerLevel: 0.08
-  neutrinoPickupChance: 0.04
+  neutrinoPickupChance: 0.05
   neutrinoPickupDelay: {x: 8, y: 25}
   heartMinInterval: 35
   heartMaxInterval: 70

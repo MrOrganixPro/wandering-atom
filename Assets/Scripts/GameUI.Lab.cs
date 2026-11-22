@@ -4,29 +4,99 @@ using UnityEngine.InputSystem;
 using UnityEngine.UIElements;
 
 /// <summary>
-/// The Lab: a research tree of upgrades that carry over between runs, bought with Research
-/// Data. Three branches (Atom, Field, Discoveries); in each, a node opens once the one above
-/// has a level. Hover a node for details, click to research it. Also here: the character
-/// chooser on PLAY (once a character is researched) and the Research Data payout on game over.
+/// The Lab: a research map of upgrades that carry over between runs, bought with Research
+/// Data. The atom sits in the middle and three branches radiate out of it (Atom lower-left,
+/// Field lower-right, Discoveries up); Atom and Field fork and merge into a keystone, the
+/// characters fan out of Mutations. Beams link the nodes: dashed while locked, dim once open,
+/// glowing with flowing particles once researched. Researching sends a data pulse from the
+/// core along the beams; when it lands the node bursts and the nodes it opens light up.
+/// Also here: the character chooser on PLAY and the Research Data payout on game over.
 /// </summary>
 public partial class GameUI
 {
     class LabNode
     {
         public LabPerk perk;
-        public VisualElement root, ring, iconHolder, connector;
-        public Label name, question;
+        public int branch, tier, index;
+        public float radius, angle;     // polar position around the core (degrees, counter-clockwise from right)
+        public Vector2 pos;             // offset from the core in panel pixels (y down)
+        public float size;
+        public bool keystone;
+        public VisualElement holder, root, glow, frame, iconHolder, spark, costRow;
+        public Label question, cost;
         public Pips pips;
-        public float pop;
+        public float pop, flash;
+        public int shownLevel;          // what the map shows: catches up when the data pulse lands
+        public bool shownOpen;
+        public float lightAt = -1f;     // when it lights up after its parents were researched
+        public readonly List<LabLink> incoming = new List<LabLink>();
     }
 
-    VisualElement labScreen;
-    Label labBank, labDetailTitle, labDetailLevel, labDetailBody, labDetailStatus;
-    VisualElement labDetail;
+    /// <summary>A beam from a node (or the core, when from is null) to a node.</summary>
+    class LabLink
+    {
+        public LabNode from, to;
+        public float startAngle, t0, t1, phase;
+    }
+
+    class LabPulse { public List<LabLink> path; public LabNode target; public float t; }
+    class LabSpark { public Vector2 pos, vel; public float life, maxLife, size; public Color color; }
+    struct LabMote { public Vector2 pos, vel; public float size, phase; }
+
+    // Layout: rings around the core and the direction each branch grows in.
+    const float LabCenterY = 0.52f;
+    const float LabCoreRadius = 62f;
+    static readonly float[] LabRings = { 0f, 132f, 236f, 330f };
+    static readonly float[] LabBranchAngle = { 210f, 330f, 90f };   // Atom, Field, Discoveries
+    static readonly Color[] LabBranchColor =
+    {
+        new Color(0.38f, 0.72f, 1f),     // Atom: electron blue
+        new Color(0.45f, 1f, 0.72f),     // Field: research-data green
+        new Color(1f, 0.8f, 0.32f),      // Discoveries: gold
+    };
+
+    // (perk, ring, angle offset from its branch, keystone, radius override (0 = the ring's))
+    static readonly (LabPerk perk, int tier, float offset, bool keystone, float r)[] LabLayout =
+    {
+        (LabPerk.Stability, 1, 0f, false, 0f),
+        (LabPerk.StartOrbital, 2, 21f, false, 0f),
+        (LabPerk.StartNeutrino, 2, -21f, false, 0f),
+        (LabPerk.SecondWind, 3, 0f, true, 0f),
+        (LabPerk.Research, 1, 0f, false, 0f),
+        (LabPerk.StabilityPickup, 2, 21f, false, 0f),
+        (LabPerk.NeutrinoPickup, 2, -21f, false, 0f),
+        (LabPerk.ExtraElectrons, 3, 0f, true, 0f),
+        (LabPerk.RareChance, 1, 38f, false, 0f),
+        (LabPerk.CharacterChance, 1, -12f, false, 0f),
+        (LabPerk.UnlockHydrogen, 2, 24f, true, 0f),
+        (LabPerk.UnlockArgon, 2, -12f, true, 0f),
+        (LabPerk.UnlockRadium, 2, -48f, true, 0f),
+        // Each character's two upgrades fan out above it (a little inside the outer ring: the screen ends there).
+        (LabPerk.IonQuanta, 3, 35f, false, 310f),
+        (LabPerk.IonNeutrino, 3, 13f, false, 310f),
+        (LabPerk.NobleDash, 3, -1f, false, 310f),
+        (LabPerk.NobleBlast, 3, -23f, false, 310f),
+        (LabPerk.RadiantSides, 3, -37f, false, 310f),
+        (LabPerk.RadiantWaves, 3, -59f, false, 310f),
+    };
+
+    // The opening animation: the core first, then each ring grows out in turn.
+    const float LabRevealEnd = 1.05f;
+    static float LabTierStart(int tier) => 0.12f + 0.22f * (tier - 1);
+
+    VisualElement labScreen, labCanvas, labFx, labTip, labCore;
+    Label labBank, labTipTitle, labTipLevel, labTipBody, labTipStatus;
+    readonly Label[] labBranchLabels = new Label[3];
     readonly List<LabNode> labNodes = new List<LabNode>();
+    readonly LabNode[] labByPerk = new LabNode[System.Enum.GetValues(typeof(LabPerk)).Length];
+    readonly List<LabLink> labLinks = new List<LabLink>();
+    readonly List<LabPulse> labPulses = new List<LabPulse>();
+    readonly List<LabSpark> labSparks = new List<LabSpark>();
+    LabMote[] labMotes;
     bool labOpen;
     int labHover = -1;
-    float labBankPop;
+    float labBankPop, labReveal = LabRevealEnd, labTipAlpha;
+    Vector2 labC;   // the core, in canvas pixels (set every repaint)
 
     VisualElement chooserScreen, chooserRow;
     bool chooserOpen;
@@ -47,6 +117,9 @@ public partial class GameUI
 
     bool AnyOverlay => indexOpen || labOpen || chooserOpen;
 
+    /// <summary>The Lab screen is open (the music switches to the Lab's own piece).</summary>
+    public static bool LabOpen => instance != null && instance.labOpen;
+
     // ---------------------------------------------------------------- texts
 
     static string PerkName(LabPerk p)
@@ -63,7 +136,28 @@ public partial class GameUI
             case LabPerk.NeutrinoPickup: return Loc.T("NEUTRINO DETECTOR", "NÖTRİNO DEDEKTÖRÜ");
             case LabPerk.RareChance: return Loc.T("RARE FINDS", "NADİR BULGULAR");
             case LabPerk.CharacterChance: return Loc.T("MUTATIONS", "DÖNÜŞÜMLER");
+            case LabPerk.IonQuanta: return Loc.T("SURPLUS CHARGE", "FAZLA YÜK");
+            case LabPerk.IonNeutrino: return Loc.T("GHOST TRAIL", "HAYALET İZİ");
+            case LabPerk.NobleDash: return Loc.T("ELECTRODASH", "ELEKTRO ATILIM");
+            case LabPerk.NobleBlast: return Loc.T("ELECTROBLAST", "ELEKTRO PATLAMA");
+            case LabPerk.RadiantSides: return Loc.T("DECAY ON ALL SIDES", "HER YÖNE BOZUNMA");
+            case LabPerk.RadiantWaves: return Loc.T("DECAY WAVES", "BOZUNMA DALGALARI");
             default: return GameManager.UpgradeTitle(GameManager.CharacterCard(Lab.CharacterOf(p)));
+        }
+    }
+
+    /// <summary>The character a character upgrade belongs to (None for the rest of the Lab).</summary>
+    static GameManager.Character UpgradeOwner(LabPerk p)
+    {
+        switch (p)
+        {
+            case LabPerk.IonQuanta:
+            case LabPerk.IonNeutrino: return GameManager.Character.Challenger;
+            case LabPerk.NobleDash:
+            case LabPerk.NobleBlast: return GameManager.Character.Sluggish;
+            case LabPerk.RadiantSides:
+            case LabPerk.RadiantWaves: return GameManager.Character.Spaceship;
+            default: return GameManager.Character.None;
         }
     }
 
@@ -78,11 +172,24 @@ public partial class GameUI
                                                   "Oyun başına bir kez, çekirdeğini yok edecek bir vuruş onu 1 kararlılıkta bırakır; bir şok dalgası ve 2 saniyelik koruma da gelir.");
             case LabPerk.Research: return Loc.T("+10% Research Data from every run, per level.", "Seviye başına her oyundan %10 fazla Araştırma Verisi.");
             case LabPerk.ExtraElectrons: return Loc.T("+1 electron placed on the map every level, per level.", "Seviye başına her bölümde haritaya +1 elektron yerleşir.");
-            case LabPerk.StabilityPickup: return Loc.T("+8% chance per level that a level holds a stability pickup (for when you're hurt).", "Seviye başına bir bölümde kararlılık bulunma şansı %8 artar (hasarlıyken çıkar).");
-            case LabPerk.NeutrinoPickup: return Loc.T("A rare, pale neutrino can drift through a level (4% at first); +6% chance per level. It passes through everything: catch it.",
-                                                      "Bir bölümde nadiren soluk bir nötrino süzülebilir (başta %4); seviye başına şans %6 artar. Her şeyin içinden geçer: yakala onu.");
+            case LabPerk.StabilityPickup: return Loc.T("When a level starts and you're below max stability, there's a 20% chance per level that a stability point is lying around.",
+                                                       "Bir bölüme azami kararlılığın altında başlarsan, seviye başına %20 ihtimalle ortalıkta bir kararlılık puanı bulunur.");
+            case LabPerk.NeutrinoPickup: return Loc.T("A rare, pale neutrino can drift through a level: 5% at first, +5% per level (up to 20%). It passes through everything: catch it.",
+                                                      "Bir bölümde nadiren soluk bir nötrino süzülebilir: başta %5, seviye başına %5 artar (en çok %20). Her şeyin içinden geçer: yakala onu.");
             case LabPerk.RareChance: return Loc.T("Rare upgrades are offered 5% of the time; +1% per level.", "Nadir geliştirmeler %5 ihtimalle çıkar; seviye başına %1 artar.");
             case LabPerk.CharacterChance: return Loc.T("A character box appears 5% of the time; +1% per level.", "Karakter kutusu %5 ihtimalle çıkar; seviye başına %1 artar.");
+            case LabPerk.IonQuanta: return Loc.T("Lonely Ion: +1 base quantum every level (3 on levels 1-5, 4 on 6-10, and so on).",
+                                                 "Yalnız İyon: her seviyede +1 temel kuantum (1-5. seviyelerde 3, 6-10'da 4 ve böyle devam eder).");
+            case LabPerk.IonNeutrino: return Loc.T("Lonely Ion: a neutrino always drifts through every level, on top of the usual chance of one.",
+                                                   "Yalnız İyon: her seviyede mutlaka bir nötrino süzülür; olağan şansla gelen de cabası.");
+            case LabPerk.NobleDash: return Loc.T("Noble Atom ability: time stops while you aim, then the atom burns its outermost electron to overcharge and dash instantly a fixed distance, untouchable on the way. 4 s cooldown.",
+                                                 "Soy Atom yeteneği: nişan alırken zaman durur; atom en dıştaki elektronunu yakıp aşırı yüklenir ve sabit bir mesafeye anında atılır, yolda ona hiçbir şey dokunamaz. 4 sn bekleme.");
+            case LabPerk.NobleBlast: return Loc.T("Noble Atom ability: time stops while you aim, then the atom burns its outermost electron into a huge ray to the edge of the screen. Every enemy in it is vaporized; dust and black holes are shoved away. 10 s cooldown.",
+                                                  "Soy Atom yeteneği: nişan alırken zaman durur; atom en dıştaki elektronunu ekranın kenarına uzanan dev bir ışına dönüştürür. İçindeki bütün düşmanlar buharlaşır; toz taneleri ve kara delikler savrulup gider. 10 sn bekleme.");
+            case LabPerk.RadiantSides: return Loc.T("Radiant: the first energy level holds 4 emitters instead of 2, each aiming on its own.",
+                                                    "Işıyan: ilk enerji seviyesi 2 yerine 4 yayıcı taşır; her biri kendi hedefini seçer.");
+            case LabPerk.RadiantWaves: return Loc.T("Radiant: emitters fire widening arcs of decay instead of bolts. A wave passes through and hits every enemy it touches.",
+                                                    "Işıyan: yayıcılar mermi yerine genişleyen bozunma yayları atar. Dalga içinden geçer ve dokunduğu her düşmanı vurur.");
             default:
                 return Loc.T("Choose to start any run as " + PerkName(p) + ". (It can still turn up in a character box as usual.)",
                              "Dilediğin oyuna " + PerkName(p) + " olarak başlayabilirsin. (Karakter kutusunda yine de çıkabilir.)");
@@ -103,6 +210,12 @@ public partial class GameUI
             case LabPerk.Research: return ProcSprites.DataChip;
             case LabPerk.RareChance: return ProcSprites.Star;
             case LabPerk.CharacterChance: return ProcSprites.Quanta;
+            case LabPerk.IonQuanta: return ProcSprites.Quanta;
+            case LabPerk.IonNeutrino: return ProcSprites.Neutrino;
+            case LabPerk.NobleDash: return ProcSprites.Arrow;
+            case LabPerk.NobleBlast: return ProcSprites.Gamma;
+            case LabPerk.RadiantSides: return ProcSprites.Trefoil;
+            case LabPerk.RadiantWaves: return ProcSprites.Ring;
             default: return IconFor(GameManager.CharacterCard(Lab.CharacterOf(p)));
         }
     }
@@ -121,8 +234,40 @@ public partial class GameUI
             case LabPerk.Research: return Lab.DataColor;
             case LabPerk.RareChance: return new Color(0.85f, 0.65f, 1f);
             case LabPerk.CharacterChance: return CardGold;
-            default: return GameManager.UpgradeColor(GameManager.CharacterCard(Lab.CharacterOf(p)));
+            default:
+                GameManager.Character owner = UpgradeOwner(p);
+                return GameManager.UpgradeColor(GameManager.CharacterCard(owner != GameManager.Character.None ? owner : Lab.CharacterOf(p)));
         }
+    }
+
+    // ---------------------------------------------------------------- geometry
+
+    /// <summary>Polar position around the core as a panel offset (y down).</summary>
+    static Vector2 LabPolar(float r, float deg)
+    {
+        float a = deg * Mathf.Deg2Rad;
+        return new Vector2(Mathf.Cos(a), -Mathf.Sin(a)) * r;
+    }
+
+    /// <summary>A point along a beam (t = 0 at its start, 1 at its end), as a core offset.
+    /// Beams interpolate in polar coordinates, so they curve around the core.</summary>
+    static Vector2 LabLinkOffset(LabLink l, float t)
+    {
+        float r0 = l.from == null ? LabCoreRadius : l.from.radius;
+        float a0 = l.from == null ? l.startAngle : l.from.angle;
+        float r = Mathf.Lerp(r0, l.to.radius, t);
+        float a = Mathf.LerpAngle(a0, l.to.angle, t);
+        return LabPolar(r, a);
+    }
+
+    Vector2 LabLinkPoint(LabLink l, float t) => labC + LabLinkOffset(l, t);
+
+    static float LabEaseBack(float t)
+    {
+        t = Mathf.Clamp01(t);
+        const float c = 1.9f;
+        float u = t - 1f;
+        return 1f + (c + 1f) * u * u * u + c * u * u;
     }
 
     // ---------------------------------------------------------------- build
@@ -130,149 +275,345 @@ public partial class GameUI
     void BuildLab()
     {
         labScreen = Layer(root);
-        labScreen.style.backgroundColor = new Color(0f, 0.01f, 0.03f, 0.95f);
+        labScreen.pickingMode = PickingMode.Position;   // blocks the screens behind it
+        labScreen.style.backgroundColor = new Color(0f, 0.008f, 0.025f, 0.97f);
+        labScreen.RegisterCallback<PointerDownEvent>(_ => SkipLabReveal());
 
-        var head = Column(labScreen, 4f);
-        var title = Text(head, Loc.T("THE LAB", "LABORATUVAR"), 50, true, Lab.DataColor);
-        title.style.letterSpacing = 8;
-        Text(head, Loc.T("Every experiment leaves data behind. Research here lasts forever.",
-                         "Her deney geride veri bırakır. Burada yapılan araştırma sonsuza dek kalır."), 16, false, Dim)
-            .style.marginTop = 2;
-
-        // Top-right: the bank.
-        var bank = Row(labScreen);
-        bank.style.position = Position.Absolute;
-        bank.style.right = 28;
-        bank.style.top = 22;
-        bank.style.alignItems = Align.Center;
-        bank.style.paddingLeft = bank.style.paddingRight = 14;
-        bank.style.paddingTop = bank.style.paddingBottom = 6;
-        bank.style.backgroundColor = WithAlpha(Panel, 0.9f);
-        Border(bank, 2f, WithAlpha(Lab.DataColor, 0.7f));
-        Radius(bank, 10);
-        Icon(bank, ProcSprites.DataChip, 30, Lab.DataColor);
-        labBank = Text(bank, "0", 28, true, Lab.DataColor);
-        labBank.style.marginLeft = 8;
-
-        // The tree: three columns.
-        var tree = Row(labScreen);
-        tree.style.position = Position.Absolute;
-        tree.style.left = tree.style.right = 0;
-        tree.style.top = Length.Percent(17);
-        tree.style.justifyContent = Justify.Center;
-        tree.style.alignItems = Align.FlexStart;
         labNodes.Clear();
+        labLinks.Clear();
+        labPulses.Clear();
+        labSparks.Clear();
+        labHover = -1;
+
+        // Soft colored zones behind each branch.
+        var zones = LabAnchor(labScreen);
         for (int b = 0; b < 3; b++)
         {
-            var col = Box(tree);
-            col.style.width = 290;
-            col.style.alignItems = Align.Center;
-            col.style.marginLeft = col.style.marginRight = 10;
-            var bh = Text(col, Loc.T(BranchNamesEn[b], BranchNamesTr[b]), 18, true, Dim);
-            bh.style.letterSpacing = 6;
-            bh.style.marginBottom = 8;
+            Vector2 zc = LabPolar(b == 2 ? 205f : 235f, LabBranchAngle[b]);
+            var z = Icon(zones, ProcSprites.Glow, 560, WithAlpha(LabBranchColor[b], 0.085f));
+            z.style.position = Position.Absolute;
+            z.style.left = zc.x - 280;
+            z.style.top = zc.y - 280;
+        }
+        var coreGlow = Icon(zones, ProcSprites.Glow, 260, WithAlpha(Lab.DataColor, 0.16f));
+        coreGlow.style.position = Position.Absolute;
+        coreGlow.style.left = coreGlow.style.top = -130;
 
-            VisualElement unlockRow = null;
-            foreach (LabPerk p in System.Enum.GetValues(typeof(LabPerk)))
+        // Background canvas: drifting motes, orbit rings, beams, the core's orbits.
+        labCanvas = Layer(labScreen);
+        labCanvas.generateVisualContent += DrawLabCanvas;
+        var rng = new System.Random(11);
+        labMotes = new LabMote[70];
+        for (int i = 0; i < labMotes.Length; i++)
+        {
+            float a = (float)rng.NextDouble() * Mathf.PI * 2f;
+            labMotes[i] = new LabMote
             {
-                if (Lab.Branch(p) != b) continue;
-                bool unlock = Lab.CharacterOf(p) != GameManager.Character.None;
-                if (unlock && unlockRow == null)
-                {
-                    var link = Box(col);   // one link down to the row of character unlocks
-                    link.style.width = 3;
-                    link.style.height = 16;
-                    link.style.backgroundColor = WithAlpha(Color.white, 0.15f);
-                    unlockRow = Row(col);
-                    unlockRow.style.justifyContent = Justify.Center;
-                    unlockRow.style.alignItems = Align.FlexStart;
-                }
-                labNodes.Add(BuildLabNode(unlock ? unlockRow : col, p, unlock));
-            }
+                pos = new Vector2((float)rng.NextDouble(), (float)rng.NextDouble()),
+                vel = new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * (0.004f + 0.01f * (float)rng.NextDouble()),
+                size = 0.8f + 1.8f * (float)rng.NextDouble(),
+                phase = (float)rng.NextDouble() * 10f,
+            };
         }
 
-        // Bottom: details of the hovered node.
-        labDetail = Box(labScreen);
-        labDetail.style.position = Position.Absolute;
-        labDetail.style.left = Length.Percent(50);
-        labDetail.style.top = Length.Percent(73);
-        labDetail.style.width = 620;
-        labDetail.style.marginLeft = -310;
-        labDetail.style.paddingLeft = labDetail.style.paddingRight = 20;
-        labDetail.style.paddingTop = labDetail.style.paddingBottom = 10;
-        labDetail.style.backgroundColor = WithAlpha(Panel, 0.9f);
-        labDetail.style.alignItems = Align.Center;
-        Radius(labDetail, 12);
-        labDetailTitle = Text(labDetail, "", 22, true, Color.white);
-        labDetailTitle.style.letterSpacing = 2;
-        labDetailLevel = Text(labDetail, "", 14, true, Dim);
-        labDetailLevel.style.letterSpacing = 3;
-        labDetailBody = Text(labDetail, "", 16, false, WithAlpha(Color.white, 0.9f), TextAnchor.MiddleCenter, true);
-        labDetailBody.style.marginTop = 4;
-        labDetailBody.style.maxWidth = 580;
-        labDetailStatus = Text(labDetail, "", 16, true, Lab.DataColor);
-        labDetailStatus.style.marginTop = 6;
+        // Nodes and branch names, positioned around the core.
+        var map = LabAnchor(labScreen);
+        foreach (var spec in LabLayout)
+        {
+            var n = new LabNode
+            {
+                perk = spec.perk,
+                branch = Lab.Branch(spec.perk),
+                tier = spec.tier,
+                keystone = spec.keystone,
+                index = labNodes.Count,
+            };
+            n.radius = spec.r > 0f ? spec.r : LabRings[spec.tier];
+            n.angle = LabBranchAngle[n.branch] + spec.offset;
+            n.pos = LabPolar(n.radius, n.angle);
+            n.size = spec.keystone ? 64f : spec.tier == 1 ? 60f : n.branch == 2 && spec.tier == 3 ? 48f : 52f;
+            BuildLabNode(map, n);
+            labNodes.Add(n);
+            labByPerk[(int)n.perk] = n;
+        }
 
-        var bottom = Column(labScreen, 90f);
+        // Beams: from the core to each root, and from each parent to its child.
+        foreach (var n in labNodes)
+        {
+            LabPerk[] parents = Lab.Parents(n.perk);
+            if (parents.Length == 0)
+            {
+                float baseAngle = LabBranchAngle[n.branch];
+                AddLabLink(null, n, baseAngle + Mathf.DeltaAngle(baseAngle, n.angle) * 0.35f);
+            }
+            foreach (LabPerk parent in parents) AddLabLink(labByPerk[(int)parent], n, 0f);
+        }
+
+        for (int b = 0; b < 3; b++)
+        {
+            Vector2 lp = b == 2 ? LabPolar(262f, 152f) : LabPolar(462f, b == 0 ? 201f : 339f);
+            var holder = Box(map);
+            holder.style.position = Position.Absolute;
+            holder.style.left = lp.x - 100;
+            holder.style.top = lp.y - 12;
+            holder.style.width = 200;
+            holder.style.alignItems = Align.Center;
+            labBranchLabels[b] = Text(holder, "", 17, true, LabBranchColor[b]);
+            labBranchLabels[b].style.letterSpacing = 5;
+        }
+
+        // The core: the nucleus, with the data bank under it.
+        labCore = Box(map);
+        labCore.style.position = Position.Absolute;
+        labCore.style.left = labCore.style.top = -LabCoreRadius;
+        labCore.style.width = labCore.style.height = LabCoreRadius * 2f;
+        labCore.style.alignItems = Align.Center;
+        labCore.style.justifyContent = Justify.Center;
+        Icon(labCore, ProcSprites.Nucleus, 34, Color.white);
+
+        var under = Box(map);
+        under.style.position = Position.Absolute;
+        under.style.left = -110;
+        under.style.width = 220;
+        under.style.top = LabCoreRadius + 10;
+        under.style.alignItems = Align.Center;
+        var bankRow = Row(under);
+        Icon(bankRow, ProcSprites.DataChip, 24, Lab.DataColor);
+        labBank = Text(bankRow, "0", 26, true, Lab.DataColor);
+        labBank.style.marginLeft = 6;
+
+        // FX canvas above the nodes: data pulses and bursts.
+        labFx = Layer(labScreen);
+        labFx.generateVisualContent += DrawLabFx;
+
+        // Top-left: the title.
+        var head = Box(labScreen);
+        head.style.position = Position.Absolute;
+        head.style.left = 30;
+        head.style.top = 22;
+        var title = Text(head, Loc.T("THE LAB", "LABORATUVAR"), 40, true, Lab.DataColor, TextAnchor.MiddleLeft);
+        title.style.letterSpacing = 8;
+
+        var bottom = Column(labScreen, 89f);
         Button(bottom, null, Loc.T("BACK", "GERİ"), "ESC", Dim, false, CloseLab);
 
+        BuildLabTip();
+        SyncLab();
+        labReveal = LabRevealEnd;
         Show(labScreen, false);
     }
 
-    LabNode BuildLabNode(VisualElement parent, LabPerk p, bool small)
+    /// <summary>A zero-size element at the core's position: its children are placed relative to the core.</summary>
+    static VisualElement LabAnchor(VisualElement parent)
     {
-        var n = new LabNode { perk = p };
-        float size = small ? 54f : 64f;
-        var holder = Box(parent);
-        holder.style.alignItems = Align.Center;
-        holder.style.width = small ? 92 : 240;
+        var e = Box(parent);
+        e.style.position = Position.Absolute;
+        e.style.left = Length.Percent(50);
+        e.style.top = Length.Percent(LabCenterY * 100f);
+        e.style.width = e.style.height = 0;
+        e.style.overflow = Overflow.Visible;
+        return e;
+    }
 
-        if (!small && Lab.Parent(p) != null)
+    void AddLabLink(LabNode from, LabNode to, float startAngle)
+    {
+        var l = new LabLink { from = from, to = to, startAngle = startAngle, phase = labLinks.Count * 0.37f };
+        float len = Vector2.Distance(LabLinkOffset(l, 0f), LabLinkOffset(l, 1f));
+        float startGap = from == null ? 4f : from.size * 0.5f + (from.keystone ? 11f : 5f);
+        float endGap = to.size * 0.5f + (to.keystone ? 11f : 5f);
+        l.t0 = Mathf.Clamp01(startGap / Mathf.Max(1f, len));
+        l.t1 = Mathf.Clamp01(1f - endGap / Mathf.Max(1f, len));
+        labLinks.Add(l);
+        to.incoming.Add(l);
+    }
+
+    void BuildLabNode(VisualElement map, LabNode n)
+    {
+        float s = n.size;
+        Color c = PerkColor(n.perk);
+        n.holder = Box(map);
+        n.holder.style.position = Position.Absolute;
+        n.holder.style.left = n.pos.x - s * 0.5f;
+        n.holder.style.top = n.pos.y - s * 0.5f;
+        n.holder.style.width = n.holder.style.height = s;
+
+        n.glow = Icon(n.holder, ProcSprites.Glow, s * 2.2f, WithAlpha(c, 0f));
+        n.glow.style.position = Position.Absolute;
+        n.glow.style.left = n.glow.style.top = -s * 0.6f;
+
+        if (n.keystone)
         {
-            n.connector = Box(holder);
-            n.connector.style.width = 3;
-            n.connector.style.height = 14;
+            n.frame = Box(n.holder);
+            n.frame.style.position = Position.Absolute;
+            n.frame.style.left = n.frame.style.top = -8;
+            n.frame.style.width = n.frame.style.height = s + 16;
+            Radius(n.frame, (s + 16) * 0.5f);
         }
 
         n.root = new VisualElement { pickingMode = PickingMode.Position };
-        n.root.style.width = n.root.style.height = size;
+        n.root.style.position = Position.Absolute;
+        n.root.style.left = n.root.style.top = 0;
+        n.root.style.width = n.root.style.height = s;
         n.root.style.justifyContent = Justify.Center;
         n.root.style.alignItems = Align.Center;
-        Radius(n.root, size * 0.5f);
-        holder.Add(n.root);
+        Radius(n.root, s * 0.5f);
+        n.holder.Add(n.root);
         n.iconHolder = Box(n.root);
-        n.iconHolder.style.justifyContent = Justify.Center;
-        n.iconHolder.style.alignItems = Align.Center;
-        Icon(n.iconHolder, PerkIcon(p), size * 0.52f, PerkColor(p));
-        n.question = Text(n.root, "?", size * 0.5f, true, WithAlpha(Color.white, 0.4f));
+        Icon(n.iconHolder, PerkIcon(n.perk), s * 0.54f, c);
+        n.question = Text(n.root, "?", s * 0.5f, true, WithAlpha(Color.white, 0.4f));
         n.question.style.position = Position.Absolute;
-        n.ring = n.root;
 
-        n.name = Text(holder, PerkName(p), small ? 11 : 13, true, Color.white, TextAnchor.MiddleCenter, true);
-        n.name.style.marginTop = 4;
-        n.name.style.maxWidth = small ? 90 : 230;
-        n.name.style.letterSpacing = 1;
-        n.pips = MakePips(holder, ProcSprites.Ball, 8, 3);
-        n.pips.row.style.marginTop = 2;
-        n.pips.row.style.marginBottom = 2;
+        n.spark = Icon(n.holder, ProcSprites.Ball, 8, Color.white);
+        n.spark.style.position = Position.Absolute;
+        n.spark.style.left = n.spark.style.top = s * 0.5f - 4f;
 
-        int index = labNodes.Count;
-        n.root.RegisterCallback<PointerEnterEvent>(_ => labHover = index);
+        var below = Box(n.holder);
+        below.style.position = Position.Absolute;
+        below.style.top = s + (n.keystone ? 11 : 5);
+        below.style.left = s * 0.5f - 60f;
+        below.style.width = 120;
+        below.style.alignItems = Align.Center;
+        n.pips = MakePips(below, ProcSprites.Ball, 7, 2);
+        n.costRow = Row(below);
+        n.costRow.style.justifyContent = Justify.Center;
+        n.costRow.style.marginTop = 1;
+        Icon(n.costRow, ProcSprites.DataChip, 13, Lab.DataColor);
+        n.cost = Text(n.costRow, "", 13, true, Lab.DataColor);
+        n.cost.style.marginLeft = 3;
+
+        int index = n.index;
+        n.root.RegisterCallback<PointerEnterEvent>(_ =>
+        {
+            if (labHover != index && labReveal >= LabRevealEnd) Sfx.Play("lock", 0.25f);
+            labHover = index;
+        });
         n.root.RegisterCallback<PointerLeaveEvent>(_ => { if (labHover == index) labHover = -1; });
-        n.root.RegisterCallback<PointerDownEvent>(ev => { if (ev.button == 0) TryResearch(n); });
-        return n;
+        n.root.RegisterCallback<PointerDownEvent>(ev =>
+        {
+            if (ev.button != 0) return;
+            if (labReveal < LabRevealEnd) { SkipLabReveal(); return; }
+            ev.StopPropagation();
+            TryResearch(n);
+        });
     }
+
+    void BuildLabTip()
+    {
+        labTip = Box(labScreen);
+        labTip.style.position = Position.Absolute;
+        labTip.style.width = 300;
+        labTip.style.paddingLeft = labTip.style.paddingRight = 16;
+        labTip.style.paddingTop = labTip.style.paddingBottom = 11;
+        labTip.style.backgroundColor = new Color(0.05f, 0.06f, 0.12f, 0.97f);
+        Radius(labTip, 10);
+        labTipTitle = Text(labTip, "", 20, true, Color.white, TextAnchor.MiddleLeft, true);
+        labTipTitle.style.letterSpacing = 2;
+        labTipLevel = Text(labTip, "", 12, true, Dim, TextAnchor.MiddleLeft);
+        labTipLevel.style.letterSpacing = 3;
+        labTipLevel.style.marginTop = 1;
+        labTipBody = Text(labTip, "", 15, false, WithAlpha(Color.white, 0.9f), TextAnchor.UpperLeft, true);
+        labTipBody.style.marginTop = 6;
+        labTipStatus = Text(labTip, "", 15, true, Lab.DataColor, TextAnchor.MiddleLeft, true);
+        labTipStatus.style.marginTop = 8;
+        labTip.style.opacity = 0f;
+    }
+
+    // ------------------------------------------------------------- research
 
     void TryResearch(LabNode n)
     {
+        // A researched Noble Atom ability: clicking it makes it the one the atom brings.
+        if (Lab.IsNobleAbility(n.perk) && Lab.Has(n.perk))
+        {
+            if (Lab.Equip(n.perk))
+            {
+                n.pop = 0.8f;
+                n.flash = 1f;
+                LabBurst(n.pos, PerkColor(n.perk), 14, 0.7f);
+                Sfx.Play("star", 0.6f);
+            }
+            return;
+        }
         if (Lab.Buy(n.perk))
         {
-            n.pop = 1f;
+            if (Lab.IsNobleAbility(n.perk)) Lab.Equip(n.perk);   // a fresh ability is equipped right away
             labBankPop = 1f;
-            Sfx.Play(Lab.Maxed(n.perk) ? "level" : "coin", 0.9f);
-            if (Lab.CharacterOf(n.perk) != GameManager.Character.None) Sfx.Play("reveal", 0.6f);
+            Sfx.Play("orb", 0.55f);
+            labPulses.Add(new LabPulse { path = LabPathTo(n), target = n });
         }
-        else Sfx.Play("full", 0.5f);
+        else
+        {
+            Sfx.Play("full", 0.5f);
+            n.flash = -1f;   // a red blink
+        }
+    }
+
+    /// <summary>The beams from the core to this node, through researched nodes.</summary>
+    List<LabLink> LabPathTo(LabNode n)
+    {
+        var path = new List<LabLink>();
+        LabNode cur = n;
+        for (int guard = 0; cur != null && guard < 10; guard++)
+        {
+            LabLink pick = null;
+            foreach (var l in cur.incoming)
+                if (l.from == null || l.from.shownLevel > 0) { pick = l; break; }
+            if (pick == null) break;
+            path.Add(pick);
+            cur = pick.from;
+        }
+        path.Reverse();
+        return path;
+    }
+
+    void LabPulseLanded(LabPulse p)
+    {
+        LabNode n = p.target;
+        n.shownLevel = Lab.Level(n.perk);
+        n.pop = 1f;
+        n.flash = 1f;
+        LabBurst(n.pos, PerkColor(n.perk), n.keystone ? 30 : 20, 1f);
+        bool maxed = n.shownLevel >= Lab.MaxLevel(n.perk);
+        Sfx.Play(maxed ? "level" : "coin", 0.9f);
+        if (Lab.CharacterOf(n.perk) != GameManager.Character.None) Sfx.Play("reveal", 0.6f);
+    }
+
+    void LabBurst(Vector2 at, Color c, int count, float power)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            float a = Random.value * Mathf.PI * 2f;
+            float sp = (60f + Random.value * 190f) * power;
+            float life = 0.35f + Random.value * 0.45f;
+            labSparks.Add(new LabSpark
+            {
+                pos = at,
+                vel = new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * sp,
+                life = life,
+                maxLife = life,
+                size = 1.5f + Random.value * 2.5f,
+                color = Random.value < 0.3f ? Color.white : c,
+            });
+        }
+    }
+
+    /// <summary>Makes the map show the saved state at once (no animations pending).</summary>
+    void SyncLab()
+    {
+        labPulses.Clear();
+        labSparks.Clear();
+        foreach (var n in labNodes)
+        {
+            n.shownLevel = Lab.Level(n.perk);
+            n.shownOpen = Lab.IsOpen(n.perk);
+            n.lightAt = -1f;
+            n.pop = n.flash = 0f;
+        }
+    }
+
+    void SkipLabReveal()
+    {
+        if (labOpen) labReveal = Mathf.Max(labReveal, LabRevealEnd);
     }
 
     // ------------------------------------------------------------- open / close
@@ -282,6 +623,9 @@ public partial class GameUI
         if (labOpen || indexOpen || chooserOpen) return;
         labOpen = true;
         labHover = -1;
+        labReveal = 0f;
+        labTipAlpha = 0f;
+        SyncLab();
         Sfx.Play("orb", 0.5f);
     }
 
@@ -311,74 +655,223 @@ public partial class GameUI
 
         var kb = Keyboard.current;
         if (kb != null && (kb.escapeKey.wasPressedThisFrame || kb.backspaceKey.wasPressedThisFrame)) { CloseLab(); return; }
+        if (kb != null && labReveal < LabRevealEnd && (kb.spaceKey.wasPressedThisFrame || kb.enterKey.wasPressedThisFrame))
+            SkipLabReveal();
 
         float dt = Time.unscaledDeltaTime, ut = Time.unscaledTime;
+        labReveal = Mathf.Min(LabRevealEnd, labReveal + dt);
+
+        // Bank and overall progress.
         labBankPop = Mathf.MoveTowards(labBankPop, 0f, dt / 0.35f);
         labBank.text = Lab.Data.ToString();
         float bs = 1f + 0.25f * labBankPop * labBankPop;
         labBank.style.scale = new Scale(new Vector3(bs, bs, 1f));
+        float coreK = LabEaseBack(labReveal / 0.25f);
+        labCore.style.scale = new Scale(new Vector3(coreK, coreK, 1f));
 
-        for (int i = 0; i < labNodes.Count; i++)
+        // Data pulses travel out along the beams (about 6 beams a second).
+        for (int i = labPulses.Count - 1; i >= 0; i--)
         {
-            LabNode n = labNodes[i];
-            int lvl = Lab.Level(n.perk), max = Lab.MaxLevel(n.perk);
-            bool open = Lab.IsOpen(n.perk), disc = Lab.Discovered(n.perk);
-            bool can = Lab.CanBuy(n.perk);
-            Color c = PerkColor(n.perk);
-            bool hover = labHover == i;
-
-            n.pop = Mathf.MoveTowards(n.pop, 0f, dt / 0.4f);
-            n.pips.Set(max, lvl, c, WithAlpha(Color.white, 0.18f));
-            Show(n.iconHolder, open && disc);
-            Show(n.question, !(open && disc));
-            n.iconHolder.style.opacity = lvl > 0 ? 1f : 0.55f;
-
-            Color border, bg;
-            if (!open || !disc) { border = WithAlpha(Color.white, 0.18f); bg = WithAlpha(Panel, 0.7f); }
-            else if (lvl >= max) { border = c; bg = WithAlpha(c, 0.3f); }
-            else if (can) { border = WithAlpha(c, 0.6f + 0.4f * Mathf.Sin(ut * 4f)); bg = WithAlpha(c, lvl > 0 ? 0.22f : 0.1f); }
-            else { border = WithAlpha(c, lvl > 0 ? 0.7f : 0.3f); bg = WithAlpha(c, lvl > 0 ? 0.18f : 0.05f); }
-            Border(n.root, hover ? 3f : 2f, hover ? Color.Lerp(border, Color.white, 0.4f) : border);
-            n.root.style.backgroundColor = bg;
-            float s = (hover ? 1.08f : 1f) * (1f + 0.3f * n.pop * n.pop);
-            n.root.style.scale = new Scale(new Vector3(s, s, 1f));
-            n.name.style.color = open && disc ? (lvl > 0 ? c : WithAlpha(Color.white, 0.75f)) : WithAlpha(Color.white, 0.3f);
-            if (n.connector != null) n.connector.style.backgroundColor = open ? WithAlpha(c, 0.55f) : WithAlpha(Color.white, 0.12f);
+            var p = labPulses[i];
+            p.t += dt * 6.5f;
+            if (p.t >= p.path.Count) { LabPulseLanded(p); labPulses.RemoveAt(i); }
         }
-        UpdateLabDetail();
+        for (int i = labSparks.Count - 1; i >= 0; i--)
+        {
+            var s = labSparks[i];
+            s.life -= dt;
+            s.pos += s.vel * dt;
+            s.vel *= Mathf.Exp(-3.5f * dt);
+            if (s.life <= 0f) labSparks.RemoveAt(i);
+        }
+        for (int i = 0; i < labMotes.Length; i++)
+        {
+            Vector2 mp = labMotes[i].pos + labMotes[i].vel * dt;
+            mp.x = Mathf.Repeat(mp.x, 1f);
+            mp.y = Mathf.Repeat(mp.y, 1f);
+            labMotes[i].pos = mp;
+        }
+
+        // Nodes light up (one after another) once every parent shows a level.
+        int stagger = 0;
+        foreach (var n in labNodes)
+        {
+            bool parentsDone = true;
+            foreach (LabPerk parent in Lab.Parents(n.perk))
+                if (labByPerk[(int)parent].shownLevel < 1) parentsDone = false;
+            if (!parentsDone) { n.shownOpen = false; n.lightAt = -1f; continue; }
+            if (n.shownOpen) continue;
+            if (n.lightAt < 0f) n.lightAt = ut + 0.12f + 0.14f * stagger++;
+            if (ut >= n.lightAt)
+            {
+                n.shownOpen = true;
+                n.lightAt = -1f;
+                n.pop = 0.8f;
+                n.flash = 1f;
+                LabBurst(n.pos, LabBranchColor[n.branch], 10, 0.6f);
+                Sfx.Play("star", 0.35f);
+            }
+        }
+
+        int[] done = labBranchDone, max = labBranchMax;
+        System.Array.Clear(done, 0, 3);
+        System.Array.Clear(max, 0, 3);
+        foreach (var n in labNodes)
+        {
+            UpdateLabNode(n, ut, dt);
+            int m = Lab.MaxLevel(n.perk);
+            done[n.branch] += Mathf.Min(n.shownLevel, m);
+            max[n.branch] += m;
+        }
+        for (int b = 0; b < 3; b++)
+        {
+            labBranchLabels[b].text = Loc.T(BranchNamesEn[b], BranchNamesTr[b]) + "  " + done[b] + "/" + max[b];
+            labBranchLabels[b].style.opacity = Mathf.Clamp01((labReveal - LabTierStart(2)) / 0.3f) * (done[b] >= max[b] ? 1f : 0.8f);
+        }
+
+        UpdateLabTip(dt);
+        labCanvas.MarkDirtyRepaint();
+        labFx.MarkDirtyRepaint();
     }
 
-    void UpdateLabDetail()
+    readonly int[] labBranchDone = new int[3], labBranchMax = new int[3];
+
+    void UpdateLabNode(LabNode n, float ut, float dt)
     {
-        Show(labDetail, true);
-        if (labHover < 0 || labHover >= labNodes.Count)
+        int lvl = n.shownLevel, max = Lab.MaxLevel(n.perk);
+        bool open = n.shownOpen, disc = Lab.Discovered(n.perk);
+        bool maxed = lvl >= max;
+        bool can = open && disc && Lab.CanBuy(n.perk);
+        Color c = PerkColor(n.perk), bc = LabBranchColor[n.branch];
+        bool hover = labHover == n.index;
+        float pulse = 0.5f + 0.5f * Mathf.Sin(ut * 4f + n.index);
+
+        n.pop = Mathf.MoveTowards(n.pop, 0f, dt / 0.4f);
+        n.flash = Mathf.MoveTowards(n.flash, 0f, dt / 0.45f);
+
+        n.pips.Set(max, lvl, c, WithAlpha(Color.white, open ? 0.2f : 0.1f));
+        Show(n.iconHolder, disc);
+        Show(n.question, !disc);
+
+        Color border, bg;
+        float iconAlpha, glowAlpha;
+        if (!open || !disc)
         {
-            Border(labDetail, 1.5f, WithAlpha(Color.white, 0.12f));
-            labDetailTitle.text = Loc.T("RESEARCH", "ARAŞTIRMA");
-            labDetailTitle.style.color = Lab.DataColor;
-            labDetailLevel.text = "";
-            labDetailBody.text = Loc.T("Each run earns Research Data: the highest element you reached, plus twice the level the run ended on. Hover a node to see what it does; click to research it.",
-                                       "Her oyun Araştırma Verisi kazandırır: ulaştığın en yüksek element, artı oyunun bittiği seviyenin iki katı. Ne işe yaradığını görmek için bir düğümün üzerine gel; araştırmak için tıkla.");
-            labDetailStatus.text = Lab.Record > 0 ? Loc.T("Best run: ", "En iyi oyun: ") + Lab.Record : "";
-            labDetailStatus.style.color = Dim;
-            return;
+            border = WithAlpha(Color.white, 0.14f);
+            bg = new Color(0.04f, 0.05f, 0.09f, 0.9f);
+            iconAlpha = 0.2f;
+            glowAlpha = 0f;
         }
-        LabPerk p = labNodes[labHover].perk;
+        else if (maxed)
+        {
+            border = c;
+            bg = Color.Lerp(new Color(0.04f, 0.05f, 0.09f, 1f), c, 0.42f);
+            iconAlpha = 1f;
+            glowAlpha = 0.2f + 0.05f * pulse;
+        }
+        else if (lvl > 0)
+        {
+            border = WithAlpha(c, can ? 0.65f + 0.35f * pulse : 0.85f);
+            bg = Color.Lerp(new Color(0.04f, 0.05f, 0.09f, 1f), c, 0.2f);
+            iconAlpha = 1f;
+            glowAlpha = can ? 0.12f + 0.18f * pulse : 0.08f;
+        }
+        else
+        {
+            border = WithAlpha(c, can ? 0.45f + 0.55f * pulse : 0.32f);
+            bg = Color.Lerp(new Color(0.04f, 0.05f, 0.09f, 1f), c, 0.07f);
+            iconAlpha = 0.7f;
+            glowAlpha = can ? 0.1f + 0.18f * pulse : 0f;
+        }
+        // The Noble Atom brings one ability: the researched one that isn't equipped is dimmed.
+        bool benched = Lab.IsNobleAbility(n.perk) && lvl > 0 && Lab.NobleAbility != n.perk;
+        if (benched)
+        {
+            border = WithAlpha(c, 0.35f);
+            bg = Color.Lerp(new Color(0.04f, 0.05f, 0.09f, 1f), c, 0.1f);
+            iconAlpha = 0.45f;
+            glowAlpha = 0f;
+            maxed = false;   // no orbiting spark either
+        }
+        if (n.flash > 0f) border = Color.Lerp(border, Color.white, n.flash);
+        else if (n.flash < 0f) border = Color.Lerp(border, Danger, -n.flash);
+        if (hover) border = Color.Lerp(border, Color.white, 0.45f);
+
+        Border(n.root, hover ? 3f : 2f, border);
+        n.root.style.backgroundColor = bg;
+        n.iconHolder.style.opacity = iconAlpha;
+        n.glow.style.unityBackgroundImageTintColor = WithAlpha(c, glowAlpha + 0.35f * Mathf.Max(0f, n.flash));
+        if (n.frame != null)
+            Border(n.frame, 1.5f, WithAlpha(maxed ? c : bc, !open ? 0.12f : maxed ? 0.85f : 0.3f + 0.25f * (lvl > 0 ? 1f : 0f)));
+
+        // A spark slowly circles fully researched nodes.
+        Show(n.spark, maxed && disc);
+        if (maxed && disc)
+        {
+            float a = ut * 1.3f + n.index * 1.7f;
+            float r = n.size * 0.5f + (n.keystone ? 8f : 5f);
+            n.spark.style.translate = new Translate(Mathf.Cos(a) * r, Mathf.Sin(a) * r);
+            n.spark.style.unityBackgroundImageTintColor = Color.Lerp(c, Color.white, 0.6f);
+        }
+
+        bool showCost = hover && open && disc && lvl < max;   // only while hovered, to keep the map clean
+        Show(n.costRow, showCost);
+        if (showCost)
+        {
+            int cost = Lab.NextCost(n.perk);
+            n.cost.text = cost.ToString();
+            n.cost.style.color = Lab.Data >= cost ? Lab.DataColor : WithAlpha(Danger, 0.85f);
+        }
+
+        // Opening: each ring pops in after its beams have grown.
+        float k = (labReveal - LabTierStart(n.tier) - 0.17f) / 0.2f;
+        float s = LabEaseBack(k) * (hover ? 1.08f : 1f) * (1f + 0.3f * n.pop * n.pop);
+        n.holder.style.scale = new Scale(new Vector3(s, s, 1f));
+        n.holder.style.opacity = Mathf.Clamp01(k * 3f);
+    }
+
+    void UpdateLabTip(float dt)
+    {
+        bool show = labHover >= 0 && labHover < labNodes.Count && labReveal >= LabRevealEnd;
+        labTipAlpha = Mathf.MoveTowards(labTipAlpha, show ? 1f : 0f, dt / 0.12f);
+        labTip.style.opacity = labTipAlpha;
+        if (!show) return;
+
+        LabNode n = labNodes[labHover];
+        LabPerk p = n.perk;
         Color c = PerkColor(p);
         int lvl = Lab.Level(p), max = Lab.MaxLevel(p);
-        Border(labDetail, 2f, WithAlpha(c, 0.8f));
         bool disc = Lab.Discovered(p), open = Lab.IsOpen(p);
-        labDetailTitle.text = disc ? PerkName(p) : "???";
-        labDetailTitle.style.color = disc ? c : Dim;
-        labDetailLevel.text = max > 1 ? Loc.T("LEVEL ", "SEVİYE ") + lvl + " / " + max : (lvl > 0 ? Loc.T("RESEARCHED", "ARAŞTIRILDI") : "");
-        labDetailBody.text = disc ? PerkBody(p)
+        Border(labTip, 2f, WithAlpha(disc ? c : Color.white, disc ? 0.8f : 0.3f));
+        labTipTitle.text = disc ? PerkName(p) : "???";
+        labTipTitle.style.color = disc ? c : Dim;
+        labTipLevel.text = Loc.T(BranchNamesEn[n.branch], BranchNamesTr[n.branch]) + "   ·   "
+            + (max > 1 ? Loc.T("LEVEL ", "SEVİYE ") + lvl + " / " + max
+                       : lvl > 0 ? Loc.T("RESEARCHED", "ARAŞTIRILDI")
+                       : n.keystone ? Loc.T("KEYSTONE", "KİLİT TAŞI") : Loc.T("ONE-TIME RESEARCH", "TEK SEFERLİK ARAŞTIRMA"));
+        labTipLevel.style.color = WithAlpha(LabBranchColor[n.branch], 0.85f);
+        labTipBody.text = disc ? PerkBody(p)
             : Loc.T("A character you haven't met yet. Find it in a character box during a run, then research it here.",
                     "Henüz karşılaşmadığın bir karakter. Önce bir oyunda karakter kutusundan çıkar, sonra burada araştır.");
 
         string status;
         Color sc = Lab.DataColor;
-        if (lvl >= max) { status = Loc.T("FULLY RESEARCHED", "TAMAMEN ARAŞTIRILDI"); sc = c; }
-        else if (!open) { status = Loc.T("Needs: ", "Gerekli: ") + PerkName(Lab.Parent(p).Value); sc = Dim; }
+        if (lvl >= max && Lab.IsNobleAbility(p))
+        {
+            bool equipped = Lab.NobleAbility == p;
+            status = equipped ? Loc.T("EQUIPPED: the Noble Atom brings this one", "TAKILI: Soy Atom bunu getirir")
+                              : Loc.T("Click to equip (only one ability at a time)", "Takmak için tıkla (aynı anda tek yetenek)");
+            sc = equipped ? c : Dim;
+        }
+        else if (lvl >= max) { status = Loc.T("FULLY RESEARCHED", "TAMAMEN ARAŞTIRILDI"); sc = c; }
+        else if (!open)
+        {
+            var needs = new List<string>();
+            foreach (LabPerk parent in Lab.Parents(p))
+                if (Lab.Level(parent) < 1) needs.Add(PerkName(parent));
+            status = Loc.T("Needs: ", "Gerekli: ") + string.Join(" + ", needs);
+            sc = Dim;
+        }
         else if (!disc) { status = Loc.T("Not discovered yet", "Henüz keşfedilmedi"); sc = Dim; }
         else
         {
@@ -388,8 +881,193 @@ public partial class GameUI
                                                                          : Loc.T("not enough data", "veri yetersiz"));
             sc = can ? Lab.DataColor : Danger;
         }
-        labDetailStatus.text = status;
-        labDetailStatus.style.color = sc;
+        labTipStatus.text = status;
+        labTipStatus.style.color = sc;
+
+        // Beside the node, on its outer side; flipped if it would leave the screen.
+        float W = labScreen.layout.width, H = labScreen.layout.height;
+        if (float.IsNaN(W) || W <= 0f) return;
+        float w = 300f;
+        float h = labTip.layout.height;
+        if (float.IsNaN(h) || h <= 0f) h = 150f;
+        float cx = W * 0.5f + n.pos.x, cy = H * LabCenterY + n.pos.y;
+        float gap = n.size * 0.5f + (n.keystone ? 22f : 16f);
+        bool right = n.pos.x > 0f || (Mathf.Abs(n.pos.x) < 1f);
+        float x = right ? cx + gap : cx - gap - w;
+        if (x + w > W - 10f) x = cx - gap - w;
+        if (x < 10f) x = cx + gap;
+        float y = Mathf.Clamp(cy - h * 0.5f, 10f, H - h - 10f);
+        labTip.style.left = x;
+        labTip.style.top = y;
+    }
+
+    // ---------------------------------------------------------------- drawing
+
+    void DrawLabCanvas(MeshGenerationContext mgc)
+    {
+        Rect r = labCanvas.contentRect;
+        if (r.width <= 0f || r.height <= 0f) return;
+        labC = new Vector2(r.width * 0.5f, r.height * LabCenterY);
+        var p = mgc.painter2D;
+        p.lineCap = LineCap.Round;
+        p.lineJoin = LineJoin.Round;
+        float ut = Time.unscaledTime;
+        float fade = Mathf.Clamp01(labReveal / 0.4f);
+
+        // Drifting motes.
+        for (int i = 0; i < labMotes.Length; i++)
+        {
+            LabMote m = labMotes[i];
+            float tw = 0.5f + 0.5f * Mathf.Sin(ut * 1.3f + m.phase);
+            FillCircle(p, new Vector2(m.pos.x * r.width, m.pos.y * r.height), m.size,
+                       new Color(0.7f, 0.9f, 1f, (0.08f + 0.22f * tw) * fade));
+        }
+
+        // Orbit rings (depth tiers).
+        for (int t = 1; t < LabRings.Length; t++)
+        {
+            float k = Mathf.Clamp01((labReveal - LabTierStart(t)) / 0.3f);
+            if (k <= 0f) continue;
+            StrokeCircle(p, labC, LabRings[t] * Mathf.Lerp(0.85f, 1f, k), 1f, new Color(1f, 1f, 1f, 0.05f * k));
+        }
+
+        // Beams.
+        foreach (var l in labLinks)
+        {
+            float grow = Mathf.Clamp01((labReveal - LabTierStart(l.to.tier)) / 0.22f);
+            if (grow <= 0f) continue;
+            float end = Mathf.Lerp(l.t0, l.t1, grow);
+            Color bc = LabBranchColor[l.to.branch];
+            bool researched = l.to.shownLevel > 0 && (l.from == null || l.from.shownLevel > 0);
+            if (researched)
+            {
+                bool maxed = l.to.shownLevel >= Lab.MaxLevel(l.to.perk);
+                StrokeLink(p, l, l.t0, end, maxed ? 10f : 8f, WithAlpha(bc, maxed ? 0.2f : 0.12f));
+                StrokeLink(p, l, l.t0, end, 2.6f, WithAlpha(Color.Lerp(bc, Color.white, maxed ? 0.35f : 0.1f), 0.9f));
+                if (grow >= 1f)
+                    for (int k = 0; k < 3; k++)   // particles flowing outward
+                    {
+                        float f = Mathf.Repeat(ut * 0.45f + l.phase + k / 3f, 1f);
+                        Vector2 q = LabLinkPoint(l, Mathf.Lerp(l.t0, l.t1, f));
+                        float a = Mathf.Sin(f * Mathf.PI);
+                        FillCircle(p, q, 5f, WithAlpha(bc, 0.18f * a));
+                        FillCircle(p, q, 2.2f, WithAlpha(Color.Lerp(bc, Color.white, 0.6f), 0.95f * a));
+                    }
+            }
+            else if (l.to.shownOpen)
+                StrokeLink(p, l, l.t0, end, 2f, WithAlpha(bc, 0.38f));
+            else
+                DashLink(p, l, l.t0, end, 1.5f, new Color(1f, 1f, 1f, 0.13f));
+        }
+
+        // The core: tilted orbits (one per branch color) with electrons, and the progress ring.
+        float coreK = LabEaseBack(labReveal / 0.25f);
+        if (coreK > 0.01f)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                float tilt = (i * 60f + 15f) * Mathf.Deg2Rad;
+                float rx = 46f * coreK, ry = 16f * coreK;
+                Color oc = LabBranchColor[(i + 2) % 3];
+                p.strokeColor = WithAlpha(oc, 0.35f);
+                p.lineWidth = 1.3f;
+                p.BeginPath();
+                for (int sgm = 0; sgm <= 40; sgm++)
+                {
+                    float a = sgm / 40f * Mathf.PI * 2f;
+                    Vector2 q = labC + LabEllipse(a, rx, ry, tilt);
+                    if (sgm == 0) p.MoveTo(q); else p.LineTo(q);
+                }
+                p.Stroke();
+                float ea = ut * (1.7f + 0.35f * i) + i * 2.1f;
+                Vector2 e = labC + LabEllipse(ea, rx, ry, tilt);
+                FillCircle(p, e, 6f, WithAlpha(oc, 0.25f));
+                FillCircle(p, e, 3f, Color.Lerp(oc, Color.white, 0.4f));
+            }
+            StrokeCircle(p, labC, (LabCoreRadius - 4f) * coreK, 1.5f, WithAlpha(Lab.DataColor, 0.18f));
+        }
+    }
+
+    void DrawLabFx(MeshGenerationContext mgc)
+    {
+        Rect r = labFx.contentRect;
+        if (r.width <= 0f || r.height <= 0f) return;
+        Vector2 c = new Vector2(r.width * 0.5f, r.height * LabCenterY);
+        var p = mgc.painter2D;
+
+        foreach (var pulse in labPulses)
+        {
+            if (pulse.path.Count == 0) continue;
+            Color bc = LabBranchColor[pulse.target.branch];
+            for (int k = 5; k >= 0; k--)   // a short fading trail behind the head
+            {
+                float t = pulse.t - k * 0.06f;
+                if (t < 0f) continue;
+                int i = Mathf.Min(pulse.path.Count - 1, Mathf.FloorToInt(t));
+                float f = Mathf.Clamp01(t - i);
+                LabLink l = pulse.path[i];
+                Vector2 q = c + LabLinkOffset(l, Mathf.Lerp(l.t0, l.t1, f));
+                float a = 1f - k / 6f;
+                if (k == 0) FillCircle(p, q, 11f, WithAlpha(bc, 0.3f));
+                FillCircle(p, q, 4.5f * a + 1f, WithAlpha(Color.Lerp(bc, Color.white, 0.7f), a));
+            }
+        }
+
+        foreach (var s in labSparks)
+        {
+            float a = Mathf.Clamp01(s.life / s.maxLife);
+            FillCircle(p, c + s.pos, s.size * (0.4f + 0.6f * a), WithAlpha(s.color, a));
+        }
+    }
+
+    static Vector2 LabEllipse(float a, float rx, float ry, float tilt)
+    {
+        Vector2 e = new Vector2(Mathf.Cos(a) * rx, Mathf.Sin(a) * ry);
+        float cs = Mathf.Cos(tilt), sn = Mathf.Sin(tilt);
+        return new Vector2(e.x * cs - e.y * sn, e.x * sn + e.y * cs);
+    }
+
+    static void FillCircle(Painter2D p, Vector2 c, float radius, Color col)
+    {
+        if (col.a <= 0.003f || radius <= 0f) return;
+        p.fillColor = col;
+        p.BeginPath();
+        p.Arc(c, radius, Angle.Degrees(0f), Angle.Degrees(360f));
+        p.ClosePath();
+        p.Fill();
+    }
+
+    static void StrokeCircle(Painter2D p, Vector2 c, float radius, float width, Color col)
+    {
+        if (col.a <= 0.003f || radius <= 0f) return;
+        p.strokeColor = col;
+        p.lineWidth = width;
+        p.BeginPath();
+        p.Arc(c, radius, Angle.Degrees(0f), Angle.Degrees(360f));
+        p.ClosePath();
+        p.Stroke();
+    }
+
+    void StrokeLink(Painter2D p, LabLink l, float a, float b, float width, Color col)
+    {
+        if (b <= a) return;
+        const int seg = 20;
+        p.strokeColor = col;
+        p.lineWidth = width;
+        p.BeginPath();
+        for (int i = 0; i <= seg; i++)
+        {
+            Vector2 q = LabLinkPoint(l, Mathf.Lerp(a, b, i / (float)seg));
+            if (i == 0) p.MoveTo(q); else p.LineTo(q);
+        }
+        p.Stroke();
+    }
+
+    void DashLink(Painter2D p, LabLink l, float a, float b, float width, Color col)
+    {
+        const float dash = 0.05f, gap = 0.045f;
+        for (float t = a; t < b; t += dash + gap)
+            StrokeLink(p, l, t, Mathf.Min(b, t + dash), width, col);
     }
 
     // ------------------------------------------------------------- chooser

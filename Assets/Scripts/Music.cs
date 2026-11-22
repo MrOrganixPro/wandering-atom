@@ -12,6 +12,10 @@ using UnityEngine;
 ///  - Space:  faint filtered "solar wind", a ping-pong echo and a big reverb wash.
 ///  - Drift:  the whole thing slowly wavers in pitch, like an old tape floating loose.
 ///
+/// The Lab has its own piece, crossfaded in while its screen is open: a calm, curious
+/// F-lydian arpeggio of soft plucks (100 bpm) over a warm bass note each bar, slow chord
+/// swells and the odd high "computer" blip, all through the same echo and reverb.
+///
 /// Rendered on the audio thread (OnAudioFilterRead), so it only uses System math and its own
 /// System.Random. Muffled while paused. Created by GameManager.
 /// </summary>
@@ -21,6 +25,8 @@ public class Music : MonoBehaviour
     public float volume = 0.4f;
     /// <summary>Muffle and soften (pause menu).</summary>
     public bool muffled;
+    /// <summary>Play the Lab's piece instead of the ambient score.</summary>
+    public bool lab;
 
     public static Music Create(Transform parent)
     {
@@ -61,6 +67,18 @@ public class Music : MonoBehaviour
         }
         return list.ToArray();
     }
+
+    // The Lab: four bars in F lydian, one chord each (low to high).
+    static readonly int[][] LabChords =
+    {
+        new[] { 53, 60, 64, 69, 71 },   // Fmaj7#11   F C E A B
+        new[] { 55, 62, 67, 69, 76 },   // G6/9       G D G A E
+        new[] { 52, 59, 62, 67, 71 },   // Em7        E B D G B
+        new[] { 57, 60, 64, 67, 71 },   // Am9        A C E G B
+    };
+    // Which chord tone each eighth note of a bar plays (with +12 = an octave up).
+    static readonly int[] LabPattern = { 1, 3, 2, 4, 3, 2 + 12, 4, 3 };
+    const float LabStep = 0.3f;   // eighth notes at 100 bpm
 
     static float Hz(int midi) => 440f * Mathf.Pow(2f, (midi - 69) / 12f);
 
@@ -122,6 +140,12 @@ public class Music : MonoBehaviour
 
     double dronePhase1, dronePhase2, dronePhase3;
 
+    // The Lab's piece
+    readonly Bell[] plucks = new Bell[16];
+    float labMix, labTimer;
+    int labStep;
+    volatile bool targetLab;
+
     // ------------------------------------------------------------- effects
 
     float[] echoL, echoR;
@@ -153,6 +177,7 @@ public class Music : MonoBehaviour
         sr = AudioSettings.outputSampleRate;
         rng = new System.Random();
         for (int i = 0; i < bells.Length; i++) bells[i] = new Bell();
+        for (int i = 0; i < plucks.Length; i++) plucks[i] = new Bell();
 
         echoL = new float[(int)(0.62f * sr)];
         echoR = new float[(int)(0.91f * sr)];
@@ -192,6 +217,7 @@ public class Music : MonoBehaviour
     {
         targetGain = Mathf.Clamp01(volume);
         targetMuffled = muffled;
+        targetLab = lab;
     }
 
     // --------------------------------------------------------------- control
@@ -313,6 +339,53 @@ public class Music : MonoBehaviour
 
         noteTimer -= dt;
         if (noteTimer <= 0f) PlayNote();
+
+        // The Lab's piece fades in over ~2 s (and out over ~3 s); its sequencer only runs while audible.
+        labMix = Mathf.MoveTowards(labMix, targetLab ? 1f : 0f, dt / (targetLab ? 2f : 3f));
+        if (labMix > 0f)
+        {
+            labTimer -= dt;
+            if (labTimer <= 0f) { labTimer += LabStep; LabNote(); }
+        }
+        else { labTimer = 0f; labStep = 0; }
+    }
+
+    /// <summary>One eighth note of the Lab's piece.</summary>
+    void LabNote()
+    {
+        int beat = labStep % 8;
+        int[] chord = LabChords[(labStep / 8) % LabChords.Length];
+        int pick = LabPattern[beat];
+        int midi = chord[pick % 12] + (pick >= 12 ? 12 : 0);
+        if (beat == 0)
+        {
+            Pluck(Hz(chord[0] - 12), 0.75f, 2.2f, 0f);          // warm bass
+            Pluck(Hz(chord[2]), 0.22f, 0.45f, -0.4f);            // slow chord swell
+            Pluck(Hz(chord[4]), 0.18f, 0.45f, 0.4f);
+        }
+        if (beat == 0 || rng.NextDouble() < 0.88)                // the odd rest keeps it alive
+            Pluck(Hz(midi), (beat == 0 ? 0.55f : 0.38f) * Rand(0.85f, 1.1f), 5.5f, beat % 2 == 0 ? -0.45f : 0.45f);
+        if (rng.NextDouble() < 0.07)                            // a high "computer" blip
+            Pluck(Hz(chord[rng.Next(1, chord.Length)] + 24), 0.16f, 9f, Rand(-0.8f, 0.8f));
+        labStep++;
+    }
+
+    void Pluck(float freq, float amp, float decay, float pan)
+    {
+        Bell b = null;
+        foreach (var x in plucks) if (!x.active) { b = x; break; }
+        if (b == null)
+        {
+            b = plucks[0];
+            foreach (var x in plucks) if (x.age > b.age) b = x;
+        }
+        b.active = true;
+        b.freq = freq;
+        b.amp = amp;
+        b.decay = decay;
+        b.age = 0f;
+        b.pan = pan;
+        b.p1 = b.p2 = b.p3 = b.p4 = 0.0;
     }
 
     static void UpdateLfo(PadVoice[] voices, float dt)
@@ -394,6 +467,33 @@ public class Music : MonoBehaviour
             windL += (nl - windL) * windCoef; windL2 += (windL - windL2) * windCoef;
             windR += (nr - windR) * windCoef; windR2 += (windR - windR2) * windCoef;
             float wL = windL2 * windAmp * 3f, wR = windR2 * windAmp * 3f;
+
+            // ---- the Lab: crossfade the ambient score out and the plucks in
+            float labK = labMix * labMix * (3f - 2f * labMix);
+            float amb = 1f - labK;
+            padL *= amb; padR *= amb; drone *= amb;
+            bellL *= amb; bellR *= amb; wL *= amb; wR *= amb;
+            if (labK > 0f)
+            {
+                foreach (var b in plucks)
+                {
+                    if (!b.active) continue;
+                    b.age += dt;
+                    float env = Mathf.Min(1f, b.age / 0.004f) * Mathf.Exp(-b.age * b.decay);
+                    if (env < 0.0004f && b.age > 0.05f) { b.active = false; continue; }
+                    double f = b.freq * inv;
+                    b.p1 = Wrap(b.p1 + f);
+                    b.p2 = Wrap(b.p2 + f * 2.0);
+                    b.p3 = Wrap(b.p3 + f * 3.0);
+                    b.p4 = Wrap(b.p4 + f * 0.5);
+                    float bright = Mathf.Exp(-b.age * b.decay * 2.5f);
+                    float s = Tab(sineTable, b.p1) + (0.35f * Tab(sineTable, b.p2) + 0.12f * Tab(sineTable, b.p3)) * bright
+                              + 0.15f * Tab(sineTable, b.p4);
+                    s *= env * b.amp * 0.1f * labK;
+                    bellL += s * (0.5f - 0.4f * b.pan);   // through the same echo and reverb
+                    bellR += s * (0.5f + 0.4f * b.pan);
+                }
+            }
 
             // ---- ping-pong echo (mostly the bells)
             float eOutL = echoL[echoPosL], eOutR = echoR[echoPosR];

@@ -451,6 +451,8 @@ public partial class GameUI : MonoBehaviour
         speedFill = Box(bar2);
         speedFill.style.height = Length.Percent(100);
         speedFill.style.backgroundColor = new Color(1f, 0.75f, 0.4f, 0.4f);
+
+        BuildAbilityButton();   // Noble Atom: just above the speed bar
     }
 
     void BuildTitle()
@@ -888,6 +890,7 @@ public partial class GameUI : MonoBehaviour
 
         UpdateElementTile();
         UpdateHudNeutrinos();
+        UpdateAbilityButton(st);
 
         if (shownLevel != gm.Level) { shownLevel = gm.Level; levelLabel.text = Loc.T("LEVEL ", "SEVİYE ") + shownLevel; }
         starPips.Set(gm.StarsNeeded, gm.StarsCollected, Pickup.Gold, Faint);

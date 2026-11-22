@@ -571,6 +571,17 @@ public class EnemyMover : MonoBehaviour
         return true;
     }
 
+    /// <summary>Noble Atom's Electroblast: destroyed outright, whatever its health.</summary>
+    public void Vaporize(Color blastColor)
+    {
+        if (dead) return;
+        dead = true;
+        Vector2 p = transform.position;
+        ParticleBursts.Burst(p, color, type == EnemyType.Brute ? 34 : 14, 7f, 0.3f, 0.6f);
+        ParticleBursts.Burst(p, blastColor, 10, 5f, 0.25f, 0.45f);
+        Destroy(gameObject);
+    }
+
     /// <summary>
     /// Repel blast at 'from': if within 'radius', knocked away (stronger when closer) and turned
     /// by 'turn' (0..1) toward flying away. Missiles lose their lock; a Flash that hasn't struck

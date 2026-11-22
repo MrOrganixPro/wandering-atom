@@ -252,7 +252,10 @@ public class EnemySpawner : MonoBehaviour
     // ------------------------------------------------------------ attraction
 
     /// <summary>Electrons held above the free amount: each one draws in more (and better aimed) enemies.</summary>
-    int ExtraElectrons => pendulumController == null ? 0
+    /// <summary>Set for the Lonely Ion: enemies scale by level alone (no attraction from the atom's size).</summary>
+    [System.NonSerialized] public bool levelOnly;
+
+    int ExtraElectrons => pendulumController == null || levelOnly ? 0
         : Mathf.Max(0, pendulumController.BallCount + pendulumController.TurretCount - attractionFreeElectrons);
 
     float AimedChance => Mathf.Min(Mathf.Max(aimedChance, attractionMaxAimedChance),

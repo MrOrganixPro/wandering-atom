@@ -10,7 +10,7 @@ using UnityEngine.Serialization;
 /// The HUD and menus are drawn by GameUI (UI Toolkit), which reads this class's state.
 /// Created automatically when any scene loads, so it does not need to be in the scene.
 /// </summary>
-public class GameManager : MonoBehaviour
+public partial class GameManager : MonoBehaviour
 {
     public enum State { Title, Playing, Paused, LevelComplete, Upgrade, GameOver, Dying, Story }
 
@@ -127,7 +127,7 @@ public class GameManager : MonoBehaviour
     [Tooltip("Chance that a level gets a heart at all (at most one per level).")]
     [Range(0f, 1f)] public float heartChancePerLevel = 0.08f;
     [Tooltip("Chance a level holds a neutrino pickup (before Lab research).")]
-    [Range(0f, 1f)] public float neutrinoPickupChance = 0.04f;
+    [Range(0f, 1f)] public float neutrinoPickupChance = 0.05f;
     [Tooltip("Seconds into the level before the neutrino pickup appears (random in this range).")]
     public Vector2 neutrinoPickupDelay = new Vector2(8f, 25f);
     [Tooltip("Seconds spent hurt in the level before that heart appears.")]
@@ -201,13 +201,17 @@ public class GameManager : MonoBehaviour
     [FormerlySerializedAs("gameChangerChance")]
     [Range(0f, 1f)] public float characterChance = 0.05f;
     public float mysteryRevealTime = 2.4f;
-    [Tooltip("Challenger (Hydrogen ion): fixed coins per level (shells don't add any).")]
-    public int challengerCoins = 3;
+    [Tooltip("Lonely Ion: quanta per level on levels 1-5 (shells don't add any)...")]
+    public int ionBaseQuanta = 2;
+    [Tooltip("...and +1 quantum every this many levels after that (6-10: 3, 11-15: 4, ...).")]
+    public int ionLevelsPerQuantum = 5;
+    [Tooltip("Lonely Ion: free neutrinos every level it completes (on top of the flawless one).")]
+    public int ionNeutrinosPerLevel = 1;
+    [Tooltip("Lonely Ion: neutrino and stability pickup chances are multiplied by this.")]
+    public float ionFindMultiplier = 2f;
     [Tooltip("Sluggish: rope lengths are multiplied by this.")]
     public float sluggishTighten = 0.78f;
     public int sluggishMaxBallArmor = 4;
-    [Tooltip("Sluggish: Speed and Torque can each be upgraded at most this many times (2 = level 3). Upgrades above this are refunded as extra picks.")]
-    public int sluggishUpgradeCap = 2;
     [Tooltip("Sluggish: orbs per level are multiplied by this.")]
     public int sluggishOrbMultiplier = 2;
     [Tooltip("Spaceship: Fire Rate upgrade, +this fraction of shots per second each.")]
@@ -264,6 +268,7 @@ public class GameManager : MonoBehaviour
     bool secondWindUsed;
     bool neutrinoPickupPending;
     float neutrinoPickupTimer;
+    float ionNeutrinoTimer = -1f;   // Lab Ghost Trail: seconds until the Lonely Ion's guaranteed neutrino (< 0: none)
     public struct Payout { public int atomicNumber, level, value, gain, bank; public bool record; public float bonus; }
     /// <summary>The last run end's Research Data (shown on the game over screen).</summary>
     public Payout LastPayout { get; private set; }
@@ -291,10 +296,17 @@ public class GameManager : MonoBehaviour
     public int MaxHealth => startingLives + upgMaxHealth + Lab.Level(LabPerk.Stability);
     /// <summary>
     /// Quanta per level from the next level on: the base, +1 for every energy level the player
-    /// has filled with electrons this run. The Hydrogen ion always gets its fixed amount.
+    /// has filled with electrons this run. The Lonely Ion instead gets 2, +1 every 5 levels.
     /// </summary>
-    public int CoinsPerLevel => character == Character.Challenger ? challengerCoins
+    public int CoinsPerLevel => character == Character.Challenger ? IonQuanta(level)
         : coinsPerLevel + shellsFilled * coinsPerExtraShell;
+    int IonQuanta(int l) => ionBaseQuanta + (Lab.Has(LabPerk.IonQuanta) ? 1 : 0)   // Lab: Surplus Charge
+                            + Mathf.Max(0, l - 1) / Mathf.Max(1, ionLevelsPerQuantum);
+    /// <summary>Pickup chance multiplier (the Lonely Ion finds twice as many neutrinos and stability points).</summary>
+    float FindMultiplier => character == Character.Challenger ? ionFindMultiplier : 1f;
+    /// <summary>Neutrinos earned by the level just completed (flawless and/or the Lonely Ion's free one).</summary>
+    public int LevelNeutrinos { get; private set; }
+    public bool IsLonelyIon => character == Character.Challenger;
     /// <summary>Quanta placed in the current level (CoinsPerLevel when it started).</summary>
     public int LevelQuanta => levelQuanta;
     /// <summary>How many of this level's quanta are new (just earned by filling an energy level).</summary>
@@ -327,8 +339,6 @@ public class GameManager : MonoBehaviour
     public static UpgradeType CharacterCard(Character c) =>
         c == Character.Challenger ? UpgradeType.Challenger
         : c == Character.Sluggish ? UpgradeType.Sluggish : UpgradeType.Spaceship;
-    /// <summary>Most Speed / Torque upgrades allowed (only limited by Argon).</summary>
-    int SpeedTorqueCap => character == Character.Sluggish ? Mathf.Max(0, sluggishUpgradeCap) : int.MaxValue;
 
     // ------------------------------------------------------------- orbitals
 
@@ -369,13 +379,11 @@ public class GameManager : MonoBehaviour
         return lens;
     }
 
-    /// <summary>Speed + Torque upgrades above the Argon cap (refunded as extra picks when it is taken).</summary>
     /// <summary>
     /// Challenger: one extra pick per level beaten (upgrades happen right after beating 'level'),
     /// plus one per ball upgrade bought (they are all taken away).
     /// </summary>
     int ChallengerRefunds => Mathf.Max(0, level) + upgBallArmor + upgBallSize + upgOrbitals;
-    int SluggishRefunds => Mathf.Max(0, upgSpeed - sluggishUpgradeCap) + Mathf.Max(0, upgTorque - sluggishUpgradeCap);
 
     // ------------------------------------------------------- read-only state for the UI
 
@@ -571,14 +579,17 @@ public class GameManager : MonoBehaviour
         if (pendulum == null) return;
 
         // New Orbitals grow the shells; Characters reshape them.
-        int layoutKey = (int)character + 16 * upgOrbitals;
+        bool allSides = character == Character.Spaceship && Lab.Has(LabPerk.RadiantSides);
+        int layoutKey = (int)character + 16 * upgOrbitals + (allSides ? 1 << 20 : 0);
         if (appliedLayout != layoutKey)
         {
             appliedLayout = layoutKey;
             int[] caps = ShellLayoutFor(upgOrbitals);
             float[] lens = ShellLengthsFor(caps.Length);
-            // Spaceship: the inner orbital's slots become turrets (its balls convert first).
-            pendulum.SetTurretSlots(character == Character.Spaceship && caps.Length > 0 ? caps[0] : 0);
+            // Radiant: the inner orbital's slots become emitters (its balls convert first).
+            // Lab Decay on All Sides: that first energy level holds 4 of them instead of 2.
+            int emitters = character == Character.Spaceship && caps.Length > 0 ? (allSides ? 4 : caps[0]) : 0;
+            pendulum.SetTurretSlots(emitters);
             if (character == Character.Spaceship && caps.Length > 0)
             {
                 int n = caps.Length - 1;
@@ -604,13 +615,11 @@ public class GameManager : MonoBehaviour
             }
         }
 
-        int speed = Mathf.Min(upgSpeed, SpeedTorqueCap);   // capped by Argon
-        int torque = Mathf.Min(upgTorque, SpeedTorqueCap);
         pendulum.ApplyUpgrades(
-            1f + speed * speedPerUpgrade,
-            1f + speed * thrustPerUpgrade,
-            torque * torquePerUpgrade,
-            torque * turnAuthorityPerTorque,
+            1f + upgSpeed * speedPerUpgrade,
+            1f + upgSpeed * thrustPerUpgrade,
+            upgTorque * torquePerUpgrade,
+            upgTorque * turnAuthorityPerTorque,
             character == Character.Challenger ? 0 : upgBallArmor);
         pendulum.ApplyExtraUpgrades(
             1f + upgBallSize * ballSizePerUpgrade,
@@ -619,7 +628,8 @@ public class GameManager : MonoBehaviour
             upgBooster);
         pendulum.ApplyTurretUpgrades(
             1f + upgFireRate * fireRatePerUpgrade,
-            upgTurretRange * turretRangePerUpgrade);
+            upgTurretRange * turretRangePerUpgrade,
+            Lab.Has(LabPerk.RadiantWaves));   // Lab Decay Waves
     }
 
     void BeginUpgradeChoices()
@@ -652,8 +662,8 @@ public class GameManager : MonoBehaviour
     void OfferCandidates(out List<UpgradeType> essentials, out List<UpgradeType> extras)
     {
         essentials = new List<UpgradeType> { UpgradeType.MaxHealth };
-        if (upgSpeed < SpeedTorqueCap) essentials.Add(UpgradeType.Speed);     // capped by Argon
-        if (upgTorque < SpeedTorqueCap) essentials.Add(UpgradeType.Torque);
+        essentials.Add(UpgradeType.Speed);
+        essentials.Add(UpgradeType.Torque);
         // New Orbital: never for the ion (it holds no electrons), once per round, rarer as the atom grows.
         if (character != Character.Challenger && !orbitalPickedThisRound && Random.value < OrbitalOfferChance)
             essentials.Add(UpgradeType.Orbital);
@@ -824,17 +834,7 @@ public class GameManager : MonoBehaviour
                 refundTotal += refunds;
                 break;
             }
-            case UpgradeType.Sluggish:
-            {
-                // Speed & Torque are capped; every level above the cap is refunded as an extra pick.
-                int refunds = SluggishRefunds;
-                character = Character.Sluggish;
-                upgSpeed = Mathf.Min(upgSpeed, SpeedTorqueCap);
-                upgTorque = Mathf.Min(upgTorque, SpeedTorqueCap);
-                pendingChoices += refunds;
-                refundTotal += refunds;
-                break;
-            }
+            case UpgradeType.Sluggish: character = Character.Sluggish; break;
         }
         ApplyUpgrades();
         Sfx.Play(IsCharacter(picked) ? "level" : "orb");
@@ -859,9 +859,9 @@ public class GameManager : MonoBehaviour
             case UpgradeType.Speed: return Loc.T("SPEED", "HIZ");
             case UpgradeType.Torque: return Loc.T("TORQUE", "TORK");
             case UpgradeType.Orbital: return Loc.T("NEW ORBITAL", "YENİ ORBİTAL");
-            case UpgradeType.Challenger: return Loc.T("HYDROGEN ION", "HİDROJEN İYONU");
-            case UpgradeType.Sluggish: return Loc.T("ARGON", "ARGON");
-            case UpgradeType.Spaceship: return Loc.T("RADIUM", "RADYUM");
+            case UpgradeType.Challenger: return Loc.T("LONELY ION", "YALNIZ İYON");
+            case UpgradeType.Sluggish: return Loc.T("NOBLE ATOM", "SOY ATOM");
+            case UpgradeType.Spaceship: return Loc.T("RADIANT", "IŞIYAN");
             case UpgradeType.BallSize: return Loc.T("BIGGER ELECTRONS", "BÜYÜK ELEKTRONLAR");
             case UpgradeType.PickupRange: return Loc.T("PICKUP RANGE", "TOPLAMA MENZİLİ");
             case UpgradeType.Repel: return Loc.T("REPEL", "İTME");
@@ -876,14 +876,19 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    string ArgonText(int refunds) =>
-        Loc.T("Tighter orbitals\n2\u00d7 electrons per level\nSpeed & Torque max " + (sluggishUpgradeCap + 1),
-              "Daha sıkı orbitaller\nSeviye başına 2\u00d7 elektron\nHız ve Tork en fazla " + (sluggishUpgradeCap + 1))
-        + (refunds > 0 ? Loc.T("\n+" + refunds + " picks now", "\nHemen +" + refunds + " seçim hakkı") : "");
+    string NobleText() =>
+        Loc.T("Tighter orbitals\n2\u00d7 electrons per level\nElectron Binding up to " + sluggishMaxBallArmor,
+              "Daha sıkı orbitaller\nSeviye başına 2\u00d7 elektron\nElektron Bağı en fazla " + sluggishMaxBallArmor)
+        + (Lab.NobleAbility == LabPerk.NobleDash ? Loc.T("\nAbility: Electrodash", "\nYetenek: Elektro Atılım")
+           : Lab.NobleAbility == LabPerk.NobleBlast ? Loc.T("\nAbility: Electroblast", "\nYetenek: Elektro Patlama") : "");
 
-    string HydrogenText(string last) =>
-        Loc.T("Lose every electron,\nforever\n" + challengerCoins + " quanta per level\n",
-              "Bütün elektronlarını\nkalıcı olarak kaybedersin\nSeviye başına " + challengerCoins + " kuanta\n") + last;
+    /// <summary>The Lonely Ion's text; the card keeps it short, the Index lists everything.</summary>
+    string HydrogenText(string last, bool full) =>
+        Loc.T("No electrons, forever\n" + ionBaseQuanta + " quanta/level, +1 per " + ionLevelsPerQuantum + " levels\n+1 neutrino every level\n",
+              "Elektron yok, kalıcı olarak\nSeviye başına " + ionBaseQuanta + " kuanta, her " + ionLevelsPerQuantum + " seviyede +1\nHer seviyede +1 nötrino\n")
+        + (full ? Loc.T("2× neutrino & stability finds\nEnemies scale with level only\n",
+                        "2× nötrino ve kararlılık bulma\nDüşmanlar yalnızca seviyeyle güçlenir\n") : "")
+        + last;
 
     /// <summary>One or two short lines; levels are shown as pips on the card (see UpgradeLevels).</summary>
     public string UpgradeDescription(UpgradeType u)
@@ -899,11 +904,14 @@ public class GameManager : MonoBehaviour
                 return Loc.T("+2 electron slots", "+2 elektron yuvası");
             case UpgradeType.Torque: return Loc.T("Sharper turns\nand braking", "Daha keskin dönüşler,\ndaha sert fren");
             case UpgradeType.Challenger:
-                return HydrogenText(Loc.T("+" + ChallengerRefunds + " picks now", "Hemen +" + ChallengerRefunds + " seçim hakkı"));
-            case UpgradeType.Sluggish: return ArgonText(SluggishRefunds);
+                return HydrogenText(Loc.T("+" + ChallengerRefunds + " picks now", "Hemen +" + ChallengerRefunds + " seçim hakkı"), false);
+            case UpgradeType.Sluggish: return NobleText();
             case UpgradeType.Spaceship:
-                return Loc.T("Inner shell becomes\n2 radiation emitters\nthat shoot enemies",
-                             "İç kabuk, düşmanlara\nateş eden 2 radyasyon\nkaynağına dönüşür");
+            {
+                int emitters = Lab.Has(LabPerk.RadiantSides) ? 4 : 2;
+                return Loc.T("Inner shell becomes\n" + emitters + " radiation emitters\nthat shoot enemies",
+                             "İç kabuk, düşmanlara\nateş eden " + emitters + " radyasyon\nkaynağına dönüşür");
+            }
             case UpgradeType.BallSize: return Loc.Pct(ballSizePerUpgrade) + Loc.T(" electron size", " elektron boyutu");
             case UpgradeType.PickupRange: return Loc.T("Grab pickups\nfrom further away", "Parçacıkları daha\nuzaktan toplarsın");
             case UpgradeType.Repel:
@@ -939,8 +947,7 @@ public class GameManager : MonoBehaviour
                              "+2 elektron yuvası\nBir enerji seviyesini elektronla doldur: seviye başına +" + coinsPerExtraShell + " kuanta");
             case UpgradeType.Repel: return Loc.T("Getting hit blasts\nenemies & dust away", "Hasar aldığında düşmanları\nve tozları savurursun");
             case UpgradeType.Booster: return Loc.T("Getting hit gives\na burst of speed", "Hasar aldığında\nani bir hız kazanırsın");
-            case UpgradeType.Challenger: return HydrogenText(Loc.T("Earlier picks refunded", "Önceki seçimlerin iade edilir"));
-            case UpgradeType.Sluggish: return ArgonText(0);
+            case UpgradeType.Challenger: return HydrogenText(Loc.T("Earlier picks refunded", "Önceki seçimlerin iade edilir"), true);
             default: return UpgradeDescription(u);
         }
     }
@@ -979,12 +986,11 @@ public class GameManager : MonoBehaviour
     public bool UpgradeLevels(UpgradeType u, out int owned, out int cap)
     {
         owned = OwnedCount(u);
-        int tt = SpeedTorqueCap == int.MaxValue ? -1 : SpeedTorqueCap;
         switch (u)
         {
             case UpgradeType.MaxHealth: cap = -1; return true;
             case UpgradeType.Speed:
-            case UpgradeType.Torque: cap = tt; return true;
+            case UpgradeType.Torque: cap = -1; return true;
             case UpgradeType.Orbital:
             {
                 // Pips = the orbitals of the shell the next one goes into (filled = already open).
@@ -1037,6 +1043,7 @@ public class GameManager : MonoBehaviour
 
     void SetState(State s)
     {
+        if (s != State.Playing && abilityAiming) EndAbilityAim(false);
         state = s;
         stateTime = 0f;
     }
@@ -1064,6 +1071,8 @@ public class GameManager : MonoBehaviour
         hurtThisLevel = false;
         levelFlawless = false;
         teaching = false;
+        if (abilityAiming) EndAbilityAim(false);   // the level sets the time scale itself
+        abilityCooldown = 0f;
         // Quanta for this level; the ones earned last level (a filled energy level) are new.
         levelQuanta = CoinsPerLevel;
         newQuanta = character == Character.Challenger ? 0 : Mathf.Min(pendingNewQuanta, levelQuanta);
@@ -1076,10 +1085,21 @@ public class GameManager : MonoBehaviour
             ParticleBursts.Burst(pendulum.PivotPosition, Pickup.HeartColor, 24, 6f, 0.3f, 0.8f);
         }
         levelCoins = 0;
-        heartAvailable = Random.value < heartChancePerLevel + Lab.StabilityPickupPerLevel * Lab.Level(LabPerk.StabilityPickup);
-        neutrinoPickupPending = Random.value < neutrinoPickupChance + Lab.NeutrinoPickupPerLevel * Lab.Level(LabPerk.NeutrinoPickup);
-        neutrinoPickupTimer = Random.Range(neutrinoPickupDelay.x, neutrinoPickupDelay.y);
+        float find = FindMultiplier;   // the Lonely Ion finds twice as much
+        heartAvailable = Random.value < heartChancePerLevel * find;
         heartTimer = Random.Range(heartMinInterval, heartMaxInterval);
+        // Lab Stabilizers: a level that starts below max stability may have a stability point
+        // lying around from the start (20% per level of research).
+        if (lives < MaxHealth && Random.value < Lab.StabilityPickupPerLevel * Lab.Level(LabPerk.StabilityPickup) * find)
+        {
+            heartAvailable = true;
+            heartTimer = 0.5f;
+        }
+        neutrinoPickupPending = Random.value < (neutrinoPickupChance + Lab.NeutrinoPickupPerLevel * Lab.Level(LabPerk.NeutrinoPickup)) * find;
+        neutrinoPickupTimer = Random.Range(neutrinoPickupDelay.x, neutrinoPickupDelay.y);
+        // Lab Ghost Trail: the Lonely Ion always gets one more neutrino drifting through the level.
+        ionNeutrinoTimer = character == Character.Challenger && Lab.Has(LabPerk.IonNeutrino)
+            ? Random.Range(neutrinoPickupDelay.x * 0.5f, neutrinoPickupDelay.y * 0.6f) : -1f;
         starsNeeded = StarsForLevel(level);
         starsCollected = 0;
         starsSpawned = 0;
@@ -1096,6 +1116,7 @@ public class GameManager : MonoBehaviour
         asteroidTimer = Random.Range(asteroidInterval.x, asteroidInterval.y) * 0.4f;
         wellTimer = Random.Range(wellInterval.x, wellInterval.y) * 0.5f;
         pendulum.ResetState(hardReset);
+        spawner.levelOnly = character == Character.Challenger;   // the Lonely Ion: enemies scale by level alone
         spawner.Begin(level);
         TopUpStars();
         for (int i = 0; i < levelQuanta; i++)
@@ -1104,8 +1125,9 @@ public class GameManager : MonoBehaviour
             if (i >= levelQuanta - newQuanta) q.MarkNew();   // just unlocked: shown off on the map
             extras.Add(q);
         }
-        // A fixed number of orbs, all placed at the start (none if the player can't have balls).
-        if (pendulum.Capacity > 0)
+        // A fixed number of orbs, all placed at the start. The Lonely Ion holds none, but still
+        // gets them: a Recycler can turn them into quanta or stability.
+        if (pendulum.Capacity > 0 || character == Character.Challenger)
             for (int i = 0, n = OrbsForLevel(level); i < n; i++)
                 orbs.Add(SpawnPickup(PickupKind.Orb, orbMinDistance, orbMaxDistance));
 
@@ -1128,8 +1150,10 @@ public class GameManager : MonoBehaviour
         SetBest(level + 1);
 
         // Not a scratch on the core all level: a neutrino.
+        // The Lonely Ion gets a free one every level too.
         levelFlawless = !hurtThisLevel;
-        if (levelFlawless) neutrinos++;
+        LevelNeutrinos = (levelFlawless ? 1 : 0) + (character == Character.Challenger ? Mathf.Max(0, ionNeutrinosPerLevel) : 0);
+        neutrinos += LevelNeutrinos;
 
         SetState(State.LevelComplete);
     }
@@ -1283,6 +1307,11 @@ public class GameManager : MonoBehaviour
     /// <summary>A level may hold one neutrino pickup (rare; the Lab raises the odds). It appears after a while.</summary>
     void UpdateNeutrinoPickup(float dt)
     {
+        if (ionNeutrinoTimer >= 0f)
+        {
+            ionNeutrinoTimer -= dt;
+            if (ionNeutrinoTimer < 0f) extras.Add(SpawnPickup(PickupKind.Neutrino, heartMinDistance, heartMaxDistance));
+        }
         if (!neutrinoPickupPending) return;
         neutrinoPickupTimer -= dt;
         if (neutrinoPickupTimer > 0f) return;
@@ -1336,7 +1365,9 @@ public class GameManager : MonoBehaviour
     public void WarnOrbitalsFull(Vector2 at)
     {
         Sfx.Play("full", 0.7f);
-        GameUI.FloatText(at, Loc.T("ORBITALS FULL", "ORBİTALLER DOLU"), new Color(1f, 0.25f, 0.25f), 24f);
+        string text = pendulum != null && pendulum.Capacity == 0 ? Loc.T("NO ORBITALS", "ORBİTAL YOK")
+                                                                 : Loc.T("ORBITALS FULL", "ORBİTALLER DOLU");
+        GameUI.FloatText(at, text, new Color(1f, 0.25f, 0.25f), 24f);
     }
 
     void OnPickupCollected(Pickup p)
@@ -1498,6 +1529,13 @@ public class GameManager : MonoBehaviour
                     teachTime += udt;
                     break;
                 }
+                if (abilityAiming)
+                {
+                    // Frozen while the Noble Atom's ability is aimed (fired or cancelled from here).
+                    UpdateAbilityAim();
+                    break;
+                }
+                abilityCooldown = Mathf.Max(0f, abilityCooldown - Time.deltaTime);
                 levelTime += Time.deltaTime;
                 UpdateHazards(Time.deltaTime);
                 UpdateHearts(Time.deltaTime);
@@ -1550,12 +1588,13 @@ public class GameManager : MonoBehaviour
         if (music != null)
         {
             music.volume = state == State.Story ? 0f : musicVolume;
+            music.lab = GameUI.LabOpen;
             music.muffled = state == State.Paused;
         }
 
         if (state != State.Paused && state != State.Upgrade)
         {
-            if (teaching && state == State.Playing) Time.timeScale = 0f;
+            if ((teaching || abilityAiming) && state == State.Playing) Time.timeScale = 0f;   // lesson / aiming an ability
             else if (hitStop > 0f)
             {
                 hitStop -= udt;

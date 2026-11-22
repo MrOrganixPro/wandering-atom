@@ -1,6 +1,6 @@
 using UnityEngine;
 
-/// <summary>What the Lab can research. Order inside a branch = order down the tree.</summary>
+/// <summary>What the Lab can research, grouped by branch (see Lab.Parents for the tree's shape).</summary>
 public enum LabPerk
 {
     // Atom
@@ -9,6 +9,8 @@ public enum LabPerk
     Research, ExtraElectrons, StabilityPickup, NeutrinoPickup,
     // Discoveries
     RareChance, CharacterChance, UnlockHydrogen, UnlockArgon, UnlockRadium,
+    // Discoveries: two upgrades per character, growing out of its unlock
+    IonQuanta, IonNeutrino, NobleDash, NobleBlast, RadiantSides, RadiantWaves,
 }
 
 /// <summary>
@@ -28,24 +30,30 @@ public static class Lab
     static readonly int[][] Costs =
     {
         new[] { 10, 20, 35 },          // Stability
-        new[] { 20, 40 },              // StartOrbital
+        new[] { 20, 35, 50, 70 },      // StartOrbital
         new[] { 10, 15, 25 },          // StartNeutrino
         new[] { 40 },                  // SecondWind
         new[] { 8, 12, 20, 30, 40 },   // Research
         new[] { 10, 20, 30 },          // ExtraElectrons
-        new[] { 8, 15, 25 },           // StabilityPickup
+        new[] { 8, 15, 25, 35 },       // StabilityPickup
         new[] { 10, 20, 30 },          // NeutrinoPickup
         new[] { 6, 10, 15, 20, 25 },   // RareChance
         new[] { 8, 12, 18, 24, 30 },   // CharacterChance
         new[] { 25 },                  // UnlockHydrogen
         new[] { 25 },                  // UnlockArgon
         new[] { 25 },                  // UnlockRadium
+        new[] { 30 },                  // IonQuanta
+        new[] { 30 },                  // IonNeutrino
+        new[] { 30 },                  // NobleDash
+        new[] { 30 },                  // NobleBlast
+        new[] { 30 },                  // RadiantSides
+        new[] { 30 },                  // RadiantWaves
     };
 
     // ---- effect sizes (per level)
     public const float ResearchPerLevel = 0.10f;          // +10% data
-    public const float StabilityPickupPerLevel = 0.08f;   // heart chance per level
-    public const float NeutrinoPickupPerLevel = 0.06f;    // neutrino pickup chance per level
+    public const float StabilityPickupPerLevel = 0.20f;   // chance per level of a stability point when a level starts hurt
+    public const float NeutrinoPickupPerLevel = 0.05f;    // neutrino pickup chance per level (5% base, up to 20%)
     public const float RareChancePerLevel = 0.01f;        // 5% base, up to 10%
     public const float CharacterChancePerLevel = 0.01f;   // 5% base, up to 10%
 
@@ -89,25 +97,47 @@ public static class Lab
 
     public static int Branch(LabPerk p) => p <= LabPerk.SecondWind ? 0 : p <= LabPerk.NeutrinoPickup ? 1 : 2;
 
-    /// <summary>The node above it in its branch (it opens once that one has a level), or null at the top.</summary>
-    public static LabPerk? Parent(LabPerk p)
+    // The tree forks: Atom and Field split after their root and merge again into a keystone
+    // that needs both paths; Discoveries has two roots, and the characters fan out of Mutations.
+    static readonly LabPerk[] NoParents = new LabPerk[0];
+    static readonly LabPerk[] FromStability = { LabPerk.Stability };
+    static readonly LabPerk[] AtomPaths = { LabPerk.StartOrbital, LabPerk.StartNeutrino };
+    static readonly LabPerk[] FromResearch = { LabPerk.Research };
+    static readonly LabPerk[] FieldPaths = { LabPerk.StabilityPickup, LabPerk.NeutrinoPickup };
+    static readonly LabPerk[] FromMutations = { LabPerk.CharacterChance };
+    static readonly LabPerk[] FromIon = { LabPerk.UnlockHydrogen };
+    static readonly LabPerk[] FromNoble = { LabPerk.UnlockArgon };
+    static readonly LabPerk[] FromRadiant = { LabPerk.UnlockRadium };
+
+    /// <summary>The nodes it grows from; it opens once every one of them has a level. Empty for roots.</summary>
+    public static LabPerk[] Parents(LabPerk p)
     {
         switch (p)
         {
-            case LabPerk.Stability:
-            case LabPerk.Research:
-            case LabPerk.RareChance: return null;
+            case LabPerk.StartOrbital:
+            case LabPerk.StartNeutrino: return FromStability;
+            case LabPerk.SecondWind: return AtomPaths;
+            case LabPerk.StabilityPickup:
+            case LabPerk.NeutrinoPickup: return FromResearch;
+            case LabPerk.ExtraElectrons: return FieldPaths;
             case LabPerk.UnlockHydrogen:
             case LabPerk.UnlockArgon:
-            case LabPerk.UnlockRadium: return LabPerk.CharacterChance;   // side by side
-            default: return p - 1;
+            case LabPerk.UnlockRadium: return FromMutations;
+            case LabPerk.IonQuanta:
+            case LabPerk.IonNeutrino: return FromIon;
+            case LabPerk.NobleDash:
+            case LabPerk.NobleBlast: return FromNoble;
+            case LabPerk.RadiantSides:
+            case LabPerk.RadiantWaves: return FromRadiant;
+            default: return NoParents;   // Stability, Research, RareChance, CharacterChance
         }
     }
 
     public static bool IsOpen(LabPerk p)
     {
-        LabPerk? parent = Parent(p);
-        return parent == null || Level(parent.Value) >= 1;
+        foreach (LabPerk parent in Parents(p))
+            if (Level(parent) < 1) return false;
+        return true;
     }
 
     /// <summary>The character a perk unlocks (None for the others).</summary>
@@ -147,6 +177,39 @@ public static class Lab
             case GameManager.Character.Spaceship: return Level(LabPerk.UnlockRadium) > 0;
             default: return true;
         }
+    }
+
+    public static bool Has(LabPerk p) => Level(p) > 0;
+
+    // ------------------------------------------------------------- Noble Atom ability
+
+    const string NobleEquipKey = "Pendulum_Lab_NobleEquip";
+
+    /// <summary>
+    /// The Noble Atom brings one ability: the equipped one if researched, otherwise whichever
+    /// is researched. Null when neither is.
+    /// </summary>
+    public static LabPerk? NobleAbility
+    {
+        get
+        {
+            var eq = (LabPerk)PlayerPrefs.GetInt(NobleEquipKey, (int)LabPerk.NobleDash);
+            if ((eq == LabPerk.NobleDash || eq == LabPerk.NobleBlast) && Has(eq)) return eq;
+            if (Has(LabPerk.NobleDash)) return LabPerk.NobleDash;
+            if (Has(LabPerk.NobleBlast)) return LabPerk.NobleBlast;
+            return null;
+        }
+    }
+
+    public static bool IsNobleAbility(LabPerk p) => p == LabPerk.NobleDash || p == LabPerk.NobleBlast;
+
+    /// <summary>Makes a researched Noble ability the one the Noble Atom brings.</summary>
+    public static bool Equip(LabPerk p)
+    {
+        if (!IsNobleAbility(p) || !Has(p) || NobleAbility == p) return false;
+        PlayerPrefs.SetInt(NobleEquipKey, (int)p);
+        PlayerPrefs.Save();
+        return true;
     }
 
     public static bool AnyCharacterUnlocked =>

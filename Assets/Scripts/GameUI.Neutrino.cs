@@ -37,6 +37,7 @@ public partial class GameUI
 
     // Level complete
     VisualElement neutrinoAward, neutrinoAwardIcon;
+    Label neutrinoAwardWhy, neutrinoAwardCount;
 
     // Upgrade screen
     VisualElement neutrinoCounter, neutrinoCounterIcon;
@@ -81,10 +82,10 @@ public partial class GameUI
         var words = Box(neutrinoAward);
         words.style.marginLeft = 6;
         words.style.alignItems = Align.FlexStart;
-        var a = Text(words, Loc.T("FLAWLESS", "KUSURSUZ"), 15, true, Dim, TextAnchor.MiddleLeft);
-        a.style.letterSpacing = 6;
-        var b = Text(words, Loc.T("+1 NEUTRINO", "+1 NÖTRİNO"), 24, true, Pickup.NeutrinoColor, TextAnchor.MiddleLeft);
-        b.style.letterSpacing = 3;
+        neutrinoAwardWhy = Text(words, "", 15, true, Dim, TextAnchor.MiddleLeft);
+        neutrinoAwardWhy.style.letterSpacing = 6;
+        neutrinoAwardCount = Text(words, "", 24, true, Pickup.NeutrinoColor, TextAnchor.MiddleLeft);
+        neutrinoAwardCount.style.letterSpacing = 3;
         neutrinoAward.style.opacity = 0f;
     }
 
@@ -93,8 +94,13 @@ public partial class GameUI
     void UpdateNeutrinoAward(int coins)
     {
         if (neutrinoAward == null) return;
-        if (!gm.LevelFlawless) { Show(neutrinoAward, false); return; }
+        int earned = gm.LevelNeutrinos;
+        if (earned <= 0) { Show(neutrinoAward, false); return; }
         Show(neutrinoAward, true);
+        // Flawless, the Lonely Ion's free one, or both.
+        neutrinoAwardWhy.text = gm.LevelFlawless && gm.IsLonelyIon ? Loc.T("FLAWLESS + LONELY ION", "KUSURSUZ + YALNIZ İYON")
+                              : gm.LevelFlawless ? Loc.T("FLAWLESS", "KUSURSUZ") : Loc.T("LONELY ION", "YALNIZ İYON");
+        neutrinoAwardCount.text = "+" + earned + (earned == 1 ? Loc.T(" NEUTRINO", " NÖTRİNO") : Loc.T(" NEUTRINOS", " NÖTRİNO"));
         float at = 0.55f + coins * 0.25f;   // after the quanta have popped in
         float t = gm.StateTime - at;
         if (t < 0f)

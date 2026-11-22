@@ -57,6 +57,8 @@ public class PendulumController : MonoBehaviour
     public float counterThrust = 0f;
     [Tooltip("How effective thrust is when it isn't pushing along your current motion (turning/braking). 1 = full. Upgradable via Torque.")]
     [Range(0f, 1f)] public float turnAuthority = 0.45f;
+    [Tooltip("Gravity wells never pull the thruster harder than this fraction of the thrust it can push away with at that moment, so they can always be escaped.")]
+    [Range(0.1f, 0.95f)] public float wellEscapeMargin = 0.7f;
 
     [Header("Orbiting Balls (shells)")]
     public int[] shellCapacities = { 2, 8 };
@@ -421,7 +423,8 @@ public class PendulumController : MonoBehaviour
         presence = Mathf.MoveTowards(presence, upgradeHidden ? 0f : 1f, Time.unscaledDeltaTime / 0.35f);
         if (alive && pod.gameObject.activeSelf == upgradeHidden) pod.gameObject.SetActive(!upgradeHidden);
 
-        if (alive && !meltingDown && Time.timeScale > 0f) ReadInput();   // no input while paused
+        // No input while paused, nor on the frame a click fired a Noble Atom ability.
+        if (alive && !meltingDown && Time.timeScale > 0f && Time.frameCount != SuppressInputFrame) ReadInput();
         else if (!alive || meltingDown) { thrust = Vector2.zero; EndDrag(); }
         if (meltingDown) pivotVel *= Mathf.Exp(-4f * dt);   // grinds to a halt while it comes apart
 
@@ -1308,12 +1311,41 @@ public class PendulumController : MonoBehaviour
         RebuildShellRings();
     }
 
-    /// <summary>Gravity well: pulls the thruster and each ball toward the hazard.</summary>
+    /// <summary>
+    /// Gravity well: pulls the thruster and each ball toward the hazard. The pull on the thruster
+    /// is capped below the thrust it can push away with right now (this scales with Speed / Torque
+    /// upgrades), so a well can always be escaped, even at the core. The electrons are pulled
+    /// with the same reduction.
+    /// </summary>
     public void ApplyPull(Hazard h, float dt)
     {
         if (!alive) return;
-        pivotVel += h.PullAt(PivotPosition) * dt;
-        foreach (var b in balls) b.vel += h.PullAt(b.pos) * dt;
+        Vector2 pull = h.PullAt(PivotPosition);
+        float raw = pull.magnitude;
+        float scale = 1f;
+        if (raw > 1e-4f)
+        {
+            float cap = wellEscapeMargin * EscapeAccel(-pull / raw);
+            if (raw > cap) scale = cap / raw;
+        }
+        pivotVel += pull * scale * dt;
+        foreach (var b in balls) b.vel += h.PullAt(b.pos) * scale * dt;
+    }
+
+    /// <summary>
+    /// How hard the thruster can accelerate toward dir at this moment (without the booster):
+    /// full thrust along its motion, only turnAuthority of it for turning / braking.
+    /// </summary>
+    float EscapeAccel(Vector2 dir)
+    {
+        float a = thrustAcceleration;
+        float spd = pivotVel.magnitude;
+        if (spd > 0.3f)
+        {
+            float c = Mathf.Max(Vector2.Dot(dir, pivotVel / spd), 0f);
+            a *= c * c + (1f - c * c) * turnAuthority;
+        }
+        return a;
     }
 
     /// <summary>
@@ -1374,6 +1406,45 @@ public class PendulumController : MonoBehaviour
             ParticleBursts.Burst(PivotPosition - n * coreRadius, col, 14, 5f, 0.3f, 0.6f);
             TakeHit(n * 3f, col);
         }
+    }
+
+    /// <summary>
+    /// Noble Atom abilities: burns the outermost electron (the highest shell, so inner energy
+    /// levels stay filled). False if there is none.
+    /// </summary>
+    public bool SacrificeOutermost(Color fxColor, out Vector2 at)
+    {
+        at = PivotPosition;
+        int best = -1;
+        for (int i = 0; i < balls.Count; i++)
+            if (best < 0 || balls[i].shell >= balls[best].shell) best = i;
+        if (best < 0) return false;
+        Ball b = balls[best];
+        at = b.pos;
+        ParticleBursts.Burst(b.pos, ShellColor(b.shell), 18, 7f, 0.3f, 0.6f);
+        ParticleBursts.Burst(b.pos, fxColor, 14, 9f, 0.25f, 0.5f);
+        Destroy(b.root);
+        balls.RemoveAt(best);
+        return true;
+    }
+
+    /// <summary>
+    /// Electrodash: the whole atom jumps by 'offset' at once, keeps flying that way, and is
+    /// untouchable for 'invulnerable' seconds.
+    /// </summary>
+    public void Dash(Vector2 offset, float invulnerable)
+    {
+        if (!alive) return;
+        transform.position += (Vector3)offset;
+        foreach (var b in balls) b.pos += offset;
+        float len = offset.magnitude;
+        if (len > 1e-4f)
+        {
+            Vector2 old = pivotVel;
+            pivotVel = offset / len * Mathf.Max(pivotVel.magnitude, maxPivotSpeed * 0.7f);
+            CarryBalls(pivotVel - old);
+        }
+        invulTimer = Mathf.Max(invulTimer, invulnerable);
     }
 
     void RemoveBall(int index, Color hitColor)
@@ -1496,11 +1567,19 @@ public class PendulumController : MonoBehaviour
     }
 
     /// <summary>Fire Rate (shots/s multiplier) and Turret Range (extra world units) upgrades.</summary>
-    public void ApplyTurretUpgrades(float fireRateMultiplier, float rangeBonus)
+    public void ApplyTurretUpgrades(float fireRateMultiplier, float rangeBonus, bool waves = false)
     {
         fireRateMult = Mathf.Max(0.05f, fireRateMultiplier);
         turretRangeBonus = Mathf.Max(0f, rangeBonus);
+        decayWaves = waves;
     }
+
+    /// <summary>Input is ignored on this frame (the click that fired an ability).</summary>
+    public static int SuppressInputFrame = -1;
+
+    bool decayWaves;   // Lab Decay Waves: emitters fire widening arcs instead of bolts
+    [Tooltip("Decay Waves: how fast a wave travels (world units per second).")]
+    public float decayWaveSpeed = 11f;
 
     Turret BuildTurret(int index, int count)
     {
@@ -1637,7 +1716,7 @@ public class PendulumController : MonoBehaviour
     /// <summary>Where to aim so a bullet meets the enemy (one refinement of the lead).</summary>
     Vector2 Lead(Vector2 from, EnemyMover e)
     {
-        float s = Mathf.Max(1f, turretBulletSpeed);
+        float s = Mathf.Max(1f, decayWaves ? decayWaveSpeed : turretBulletSpeed);
         Vector2 p = e.Position, v = e.Velocity;
         float t = (p - from).magnitude / s;
         t = (p + v * t - from).magnitude / s;
@@ -1652,7 +1731,8 @@ public class PendulumController : MonoBehaviour
         Vector2 dir = new Vector2(Mathf.Cos(a), Mathf.Sin(a));
         Vector2 muzzle = (Vector2)t.mount.position + dir * 0.3f;
         float speed = Mathf.Max(1f, turretBulletSpeed);
-        TurretBullet.Spawn(muzzle, dir * speed, (TurretRangeNow + 0.6f) / speed, turretColor);
+        if (decayWaves) DecayWave.Spawn(muzzle, dir, decayWaveSpeed, TurretRangeNow + 0.6f, turretColor);
+        else TurretBullet.Spawn(muzzle, dir * speed, (TurretRangeNow + 0.6f) / speed, turretColor);
         for (int i = 0; i < 3; i++)
             ParticleBursts.Emit(muzzle, dir * Random.Range(2f, 4f) + Random.insideUnitCircle * 1.2f + pivotVel * 0.5f,
                 turretColor, 0.1f, 0.15f, 6f);
