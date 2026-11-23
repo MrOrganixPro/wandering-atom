@@ -62,10 +62,12 @@ public class EnemySpawner : MonoBehaviour
     [Tooltip("Missile speed multiplier grows by this every level after it unlocks.")]
     public float missileSpeedPerLevel = 0.02f;
     [Tooltip("How fast the missile can turn (deg/s) when it first unlocks.")]
-    public float missileTurnRate = 45f;
-    public float missileTurnRatePerLevel = 3f;
+    public float missileTurnRate = 20f;
+    public float missileTurnRatePerLevel = 1f;
+    [Tooltip("The turn rate never grows past this (deg/s).")]
+    public float missileMaxTurnRate = 35f;
     [Tooltip("Once the atom is more than this many degrees off its heading, the positron gives up and flies on straight.")]
-    public float missileGiveUpAngle = 90f;
+    public float missileGiveUpAngle = 75f;
 
     [Header("Rare: Lightning Flash")]
     public int flashUnlockLevel = 4;
@@ -486,7 +488,8 @@ public class EnemySpawner : MonoBehaviour
         }
         if (type == EnemyType.Missile)
         {
-            mover.missileTurnRate = Grow(missileTurnRate, missileTurnRatePerLevel, Mathf.Max(0, level - missileUnlockLevel));
+            mover.missileTurnRate = Mathf.Min(missileMaxTurnRate,
+                Grow(missileTurnRate, missileTurnRatePerLevel, Mathf.Max(0, level - missileUnlockLevel)));
             mover.missileGiveUpAngle = missileGiveUpAngle;
         }
         enemies.Add(enemy);

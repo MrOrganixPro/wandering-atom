@@ -16,6 +16,10 @@ public enum LabPerk
     // The Excited Atom (it took over NobleDash / NobleBlast, which keep their saved names),
     // and the Noble Atom's own two upgrades.
     UnlockExcited, NobleLinger, NobleProclaim,
+    // The Discoveries root: Rare Finds and Mutations grow out of it.
+    ProbabilityAmplitude,
+    // The last three characters' own upgrades.
+    ConductSuper, ConductPlating, HalogenHunter, HalogenCorrosion, AlkaliViolent, AlkaliBoomerang,
 }
 
 /// <summary>
@@ -40,7 +44,7 @@ public static class Lab
         new[] { 40 },                  // SecondWind
         new[] { 8, 12, 20, 30, 40 },   // Research
         new[] { 10, 20, 30 },          // ExtraElectrons
-        new[] { 8, 15, 25, 35 },       // StabilityPickup
+        new[] { 10, 20, 30 },          // StabilityPickup (same as NeutrinoPickup)
         new[] { 10, 20, 30 },          // NeutrinoPickup
         new[] { 6, 10, 15, 20, 25 },   // RareChance
         new[] { 8, 12, 18, 24, 30 },   // CharacterChance
@@ -59,14 +63,22 @@ public static class Lab
         new[] { 25 },                  // UnlockExcited
         new[] { 30 },                  // NobleLinger
         new[] { 30 },                  // NobleProclaim
+        new[] { 10 },                  // ProbabilityAmplitude
+        new[] { 30 },                  // ConductSuper
+        new[] { 30 },                  // ConductPlating
+        new[] { 30 },                  // HalogenHunter
+        new[] { 30 },                  // HalogenCorrosion
+        new[] { 30 },                  // AlkaliViolent
+        new[] { 30 },                  // AlkaliBoomerang
     };
 
     // ---- effect sizes (per level)
     public const float ResearchPerLevel = 0.10f;          // +10% data
-    public const float StabilityPickupPerLevel = 0.20f;   // chance per level of a stability point when a level starts hurt
+    public const float StabilityPickupPerLevel = 0.05f;   // extra stability point chance per level, when a level starts hurt (up to 15%)
     public const float NeutrinoPickupPerLevel = 0.05f;    // neutrino pickup chance per level (5% base, up to 20%)
     public const float RareChancePerLevel = 0.01f;        // 5% base, up to 10%
     public const float CharacterChancePerLevel = 0.01f;   // 5% base, up to 10%
+    public const float AmplitudePerMiss = 0.01f;          // +1% per missed rare / character roll (this run)
 
     // ------------------------------------------------------------- bank
 
@@ -153,17 +165,22 @@ public static class Lab
     public static int Branch(LabPerk p) => p <= LabPerk.SecondWind ? 0 : p <= LabPerk.NeutrinoPickup ? 1 : 2;
 
     // The tree forks: Atom and Field split after their root and merge again into a keystone
-    // that needs both paths; Discoveries has two roots, and the characters fan out of Mutations.
+    // that needs both paths; Discoveries grows from Probability Amplitude into Rare Finds and Mutations,
+    // and the characters fan out of Mutations.
     static readonly LabPerk[] NoParents = new LabPerk[0];
     static readonly LabPerk[] FromStability = { LabPerk.Stability };
     static readonly LabPerk[] AtomPaths = { LabPerk.StartOrbital, LabPerk.StartNeutrino };
     static readonly LabPerk[] FromResearch = { LabPerk.Research };
     static readonly LabPerk[] FieldPaths = { LabPerk.StabilityPickup, LabPerk.NeutrinoPickup };
+    static readonly LabPerk[] FromAmplitude = { LabPerk.ProbabilityAmplitude };
     static readonly LabPerk[] FromMutations = { LabPerk.CharacterChance };
     static readonly LabPerk[] FromIon = { LabPerk.UnlockHydrogen };
     static readonly LabPerk[] FromNoble = { LabPerk.UnlockArgon };
     static readonly LabPerk[] FromExcited = { LabPerk.UnlockExcited };
     static readonly LabPerk[] FromRadiant = { LabPerk.UnlockRadium };
+    static readonly LabPerk[] FromConductive = { LabPerk.UnlockConductive };
+    static readonly LabPerk[] FromHalogen = { LabPerk.UnlockHalogen };
+    static readonly LabPerk[] FromAlkali = { LabPerk.UnlockAlkali };
 
     /// <summary>The nodes it grows from; it opens once every one of them has a level. Empty for roots.</summary>
     public static LabPerk[] Parents(LabPerk p)
@@ -183,6 +200,8 @@ public static class Lab
             case LabPerk.UnlockHalogen:
             case LabPerk.UnlockAlkali:
             case LabPerk.UnlockExcited: return FromMutations;
+            case LabPerk.RareChance:
+            case LabPerk.CharacterChance: return FromAmplitude;
             case LabPerk.IonQuanta:
             case LabPerk.IonNeutrino: return FromIon;
             case LabPerk.NobleDash:
@@ -191,7 +210,13 @@ public static class Lab
             case LabPerk.NobleProclaim: return FromNoble;
             case LabPerk.RadiantSides:
             case LabPerk.RadiantWaves: return FromRadiant;
-            default: return NoParents;   // Stability, Research, RareChance, CharacterChance
+            case LabPerk.ConductSuper:
+            case LabPerk.ConductPlating: return FromConductive;
+            case LabPerk.HalogenHunter:
+            case LabPerk.HalogenCorrosion: return FromHalogen;
+            case LabPerk.AlkaliViolent:
+            case LabPerk.AlkaliBoomerang: return FromAlkali;
+            default: return NoParents;   // Stability, Research, ProbabilityAmplitude
         }
     }
 

@@ -171,7 +171,7 @@ public class Hazard : MonoBehaviour
         {
             if (Type == HazardType.GravityWell) pc.ApplyPull(this, dt);
             pc.HazardCircle(pos, radius, velocity, Type == HazardType.Asteroid ? RockColor : WellColor,
-                Type == HazardType.GravityWell ? 9f : 0f, Type == HazardType.GravityWell);
+                Type == HazardType.GravityWell ? 9f : 0f, Type == HazardType.GravityWell, transform);
         }
 
         // Drifted far away and still leaving -> remove.

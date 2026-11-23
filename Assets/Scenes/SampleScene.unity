@@ -172,9 +172,10 @@ MonoBehaviour:
   missileChancePerLevel: 0.01
   missileSpeedMultiplier: 1.3
   missileSpeedPerLevel: 0.02
-  missileTurnRate: 45
-  missileTurnRatePerLevel: 3
-  missileGiveUpAngle: 90
+  missileTurnRate: 20
+  missileTurnRatePerLevel: 1
+  missileMaxTurnRate: 35
+  missileGiveUpAngle: 75
   flashUnlockLevel: 10
   flashChance: 0.05
   maxFlashChance: 0.1

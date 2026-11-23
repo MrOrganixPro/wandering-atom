@@ -6,7 +6,8 @@ using UnityEngine.UIElements;
 /// <summary>
 /// The Lab: a research map of upgrades that carry over between runs, bought with Research
 /// Data. The atom sits in the middle and three branches radiate out of it (Atom lower-left,
-/// Field lower-right, Discoveries up); Atom and Field fork and merge into a keystone, the
+/// Field lower-right, Discoveries up); Atom and Field fork and merge into a keystone;
+/// Discoveries opens with Probability Amplitude, which forks into Rare Finds and Mutations, and the
 /// characters fan out of Mutations. Beams link the nodes: dashed while locked, dim once open,
 /// glowing with flowing particles once researched. Researching sends a data pulse from the
 /// core along the beams; when it lands the node bursts and the nodes it opens light up.
@@ -48,7 +49,7 @@ public partial class GameUI
     const float LabCoreRadius = 62f;
     static readonly float[] LabRings = { 0f, 230f, 440f, 660f };
     static readonly float[] LabBranchAngle = { 210f, 330f, 90f };   // Atom, Field, Discoveries
-    const float LabCharUpgradeRadius = 690f;   // each character's own upgrades
+    const float LabCharUpgradeRadius = 890f;   // each character's own upgrades
     const float LabPanMargin = 90f;            // how far past the map's edge it can be dragged
     static readonly Color[] LabBranchColor =
     {
@@ -68,29 +69,37 @@ public partial class GameUI
         (LabPerk.StabilityPickup, 2, 17f, false, 0f),
         (LabPerk.NeutrinoPickup, 2, -17f, false, 0f),
         (LabPerk.ExtraElectrons, 3, 0f, true, 0f),
-        (LabPerk.RareChance, 1, 40f, false, 0f),
-        (LabPerk.CharacterChance, 1, 0f, false, 0f),
-        // Seven characters fan out of Mutations, 20 degrees apart.
-        (LabPerk.UnlockHydrogen, 2, 60f, true, 0f),
-        (LabPerk.UnlockArgon, 2, 40f, true, 0f),
-        (LabPerk.UnlockRadium, 2, 20f, true, 0f),
-        (LabPerk.UnlockExcited, 2, 0f, true, 0f),
-        (LabPerk.UnlockConductive, 2, -20f, true, 0f),
-        (LabPerk.UnlockHalogen, 2, -40f, true, 0f),
-        (LabPerk.UnlockAlkali, 2, -60f, true, 0f),
-        // Each character's two upgrades fan out above it (the last three characters' spots are still empty).
-        (LabPerk.IonQuanta, 3, 65f, false, LabCharUpgradeRadius),
-        (LabPerk.IonNeutrino, 3, 55f, false, LabCharUpgradeRadius),
-        (LabPerk.NobleLinger, 3, 45f, false, LabCharUpgradeRadius),
-        (LabPerk.NobleProclaim, 3, 35f, false, LabCharUpgradeRadius),
-        (LabPerk.RadiantSides, 3, 25f, false, LabCharUpgradeRadius),
-        (LabPerk.RadiantWaves, 3, 15f, false, LabCharUpgradeRadius),
-        (LabPerk.NobleDash, 3, 5f, false, LabCharUpgradeRadius),
-        (LabPerk.NobleBlast, 3, -5f, false, LabCharUpgradeRadius),
+        // Discoveries: Probability Amplitude, then Rare Finds and Mutations, then the characters.
+        (LabPerk.ProbabilityAmplitude, 1, 0f, false, 0f),
+        (LabPerk.RareChance, 2, 25f, false, 0f),
+        (LabPerk.CharacterChance, 2, 0f, false, 0f),
+        // Seven characters fan out of Mutations, 16 degrees apart.
+        (LabPerk.UnlockHydrogen, 3, 48f, true, 0f),
+        (LabPerk.UnlockArgon, 3, 32f, true, 0f),
+        (LabPerk.UnlockRadium, 3, 16f, true, 0f),
+        (LabPerk.UnlockExcited, 3, 0f, true, 0f),
+        (LabPerk.UnlockConductive, 3, -16f, true, 0f),
+        (LabPerk.UnlockHalogen, 3, -32f, true, 0f),
+        (LabPerk.UnlockAlkali, 3, -48f, true, 0f),
+        // Each character's two upgrades fan out above it.
+        (LabPerk.IonQuanta, 4, 52f, false, LabCharUpgradeRadius),
+        (LabPerk.IonNeutrino, 4, 44f, false, LabCharUpgradeRadius),
+        (LabPerk.NobleLinger, 4, 36f, false, LabCharUpgradeRadius),
+        (LabPerk.NobleProclaim, 4, 28f, false, LabCharUpgradeRadius),
+        (LabPerk.RadiantSides, 4, 20f, false, LabCharUpgradeRadius),
+        (LabPerk.RadiantWaves, 4, 12f, false, LabCharUpgradeRadius),
+        (LabPerk.NobleDash, 4, 4f, false, LabCharUpgradeRadius),
+        (LabPerk.NobleBlast, 4, -4f, false, LabCharUpgradeRadius),
+        (LabPerk.ConductSuper, 4, -12f, false, LabCharUpgradeRadius),
+        (LabPerk.ConductPlating, 4, -20f, false, LabCharUpgradeRadius),
+        (LabPerk.HalogenHunter, 4, -28f, false, LabCharUpgradeRadius),
+        (LabPerk.HalogenCorrosion, 4, -36f, false, LabCharUpgradeRadius),
+        (LabPerk.AlkaliViolent, 4, -44f, false, LabCharUpgradeRadius),
+        (LabPerk.AlkaliBoomerang, 4, -52f, false, LabCharUpgradeRadius),
     };
 
     // The opening animation: the core first, then each ring grows out in turn.
-    const float LabRevealEnd = 1.05f;
+    const float LabRevealEnd = 1.27f;   // the outermost ring (tier 4) has fully popped in by then
     static float LabTierStart(int tier) => 0.12f + 0.22f * (tier - 1);
 
     VisualElement labScreen, labCanvas, labFx, labTip, labCore;
@@ -152,6 +161,7 @@ public partial class GameUI
             case LabPerk.NeutrinoPickup: return Loc.T("NEUTRINO DETECTOR", "NÖTRİNO DEDEKTÖRÜ");
             case LabPerk.RareChance: return Loc.T("RARE FINDS", "NADİR BULGULAR");
             case LabPerk.CharacterChance: return Loc.T("MUTATIONS", "DÖNÜŞÜMLER");
+            case LabPerk.ProbabilityAmplitude: return Loc.T("PROBABILITY AMPLITUDE", "OLASILIK GENLİĞİ");
             case LabPerk.IonQuanta: return Loc.T("SURPLUS CHARGE", "FAZLA YÜK");
             case LabPerk.IonNeutrino: return Loc.T("GHOST TRAIL", "HAYALET İZİ");
             case LabPerk.NobleDash: return Loc.T("ELECTRODASH", "ELEKTRO ATILIM");
@@ -160,6 +170,12 @@ public partial class GameUI
             case LabPerk.NobleProclaim: return Loc.T("PROCLAMATION OF NOBILITY", "SOYLULUK İLANI");
             case LabPerk.RadiantSides: return Loc.T("DECAY ON ALL SIDES", "HER YÖNE BOZUNMA");
             case LabPerk.RadiantWaves: return Loc.T("DECAY WAVES", "BOZUNMA DALGALARI");
+            case LabPerk.ConductSuper: return Loc.T("SUPERCONDUCTOR", "SÜPERİLETKEN");
+            case LabPerk.ConductPlating: return Loc.T("ELECTROPLATING", "ELEKTROKAPLAMA");
+            case LabPerk.HalogenHunter: return Loc.T("RADICAL HUNTER", "RADİKAL AVCISI");
+            case LabPerk.HalogenCorrosion: return Loc.T("CORROSION", "AŞINDIRMA");
+            case LabPerk.AlkaliViolent: return Loc.T("VIOLENT REACTION", "ŞİDDETLİ TEPKİME");
+            case LabPerk.AlkaliBoomerang: return Loc.T("BOOMERANG", "BUMERANG");
             default: return GameManager.UpgradeTitle(GameManager.CharacterCard(Lab.CharacterOf(p)));
         }
     }
@@ -177,6 +193,12 @@ public partial class GameUI
             case LabPerk.NobleProclaim: return GameManager.Character.Sluggish;
             case LabPerk.RadiantSides:
             case LabPerk.RadiantWaves: return GameManager.Character.Spaceship;
+            case LabPerk.ConductSuper:
+            case LabPerk.ConductPlating: return GameManager.Character.Conductive;
+            case LabPerk.HalogenHunter:
+            case LabPerk.HalogenCorrosion: return GameManager.Character.Halogen;
+            case LabPerk.AlkaliViolent:
+            case LabPerk.AlkaliBoomerang: return GameManager.Character.Alkali;
             default: return GameManager.Character.None;
         }
     }
@@ -191,10 +213,12 @@ public partial class GameUI
             case LabPerk.SecondWind: return Loc.T("Survive one fatal hit per run.", "Oyun başına bir ölümcül darbeden kurtul.");
             case LabPerk.Research: return Loc.T("+10% data from every run.", "Her oyundan %10 fazla veri.");
             case LabPerk.ExtraElectrons: return Loc.T("+1 electron on the map every level.", "Her bölümde haritada +1 elektron.");
-            case LabPerk.StabilityPickup: return Loc.T("+20% chance of a stability pickup per level.", "Bölüm başına %20 kararlılık bulma şansı.");
-            case LabPerk.NeutrinoPickup: return Loc.T("+5% chance of a neutrino per level (max 20%).", "Bölüm başına %5 nötrino şansı (en çok %20).");
+            case LabPerk.StabilityPickup: return Loc.T("A stability point may be waiting when you start a level hurt.", "Bölüme hasarlı başlarsan seni bir kararlılık bekleyebilir.");
+            case LabPerk.NeutrinoPickup: return Loc.T("Neutrinos turn up more often.", "Nötrinolar daha sık çıkar.");
             case LabPerk.RareChance: return Loc.T("+1% rare upgrade chance (base 5%).", "+%1 nadir geliştirme şansı (temel %5).");
             case LabPerk.CharacterChance: return Loc.T("+1% character box chance (base 5%).", "+%1 karakter kutusu şansı (temel %5).");
+            case LabPerk.ProbabilityAmplitude: return Loc.T("Every pick without a rare card or character box adds +1% to that chance, until one shows up.",
+                                                   "Nadir kart ya da karakter kutusu çıkmayan her seçim o şansa +%1 ekler; biri çıkınca sıfırlanır.");
             case LabPerk.IonQuanta: return Loc.T("Lonely Ion: +1 quantum every level.", "Yalnız İyon: her seviyede +1 kuantum.");
             case LabPerk.IonNeutrino: return Loc.T("Lonely Ion: a neutrino every level.", "Yalnız İyon: her seviyede bir nötrino.");
             case LabPerk.NobleDash: return Loc.T("Burn an electron: dash, untouchable. 4s.", "Bir elektron yak: dokunulmaz atıl. 4 sn.");
@@ -203,6 +227,16 @@ public partial class GameUI
             case LabPerk.NobleProclaim: return Loc.T("Noble Atom: reaching a full shell sends out a huge wave that clears enemies. 10s.", "Soy Atom: tam kabuğa ulaşınca düşmanları temizleyen dev bir dalga yayar. 10 sn.");
             case LabPerk.RadiantSides: return Loc.T("Radiant: 4 emitters instead of 2.", "Işıyan: 2 yerine 4 yayıcı.");
             case LabPerk.RadiantWaves: return Loc.T("Radiant: piercing decay waves.", "Işıyan: delip geçen bozunma dalgaları.");
+            case LabPerk.ConductSuper: return Loc.T("Conductive: every level starts fully charged.", "İletken: her bölüme tam yüklü başlar.");
+            case LabPerk.ConductPlating: return Loc.T("Conductive: enemies destroyed by zaps sometimes drop an electron.",
+                                                      "İletken: şokla yok edilen düşmanlar bazen elektron düşürür.");
+            case LabPerk.HalogenHunter: return Loc.T("Halogen: free radicals drift toward you.", "Halojen: serbest radikaller sana doğru sürüklenir.");
+            case LabPerk.HalogenCorrosion: return Loc.T("Halogen: enemies inside your electron cloud slow down.",
+                                                        "Halojen: elektron bulutuna giren düşmanlar yavaşlar.");
+            case LabPerk.AlkaliViolent: return Loc.T("Alkali Metal: the blast leaves a fire for 1s that destroys enemies entering it.",
+                                                     "Alkali Metal: patlama 1 sn boyunca içine gireni yok eden bir ateş bırakır.");
+            case LabPerk.AlkaliBoomerang: return Loc.T("Alkali Metal: the electron destroys enemies on its way back too.",
+                                                       "Alkali Metal: elektron dönüş yolunda da düşmanları yok eder.");
             default: return Loc.T("Start any run as " + PerkName(p) + ".", "Oyuna " + PerkName(p) + " olarak başla.");
         }
     }
@@ -221,6 +255,7 @@ public partial class GameUI
             case LabPerk.Research: return ProcSprites.DataChip;
             case LabPerk.RareChance: return ProcSprites.Star;
             case LabPerk.CharacterChance: return ProcSprites.Quanta;
+            case LabPerk.ProbabilityAmplitude: return ProcSprites.Ring;
             case LabPerk.IonQuanta: return ProcSprites.Quanta;
             case LabPerk.IonNeutrino: return ProcSprites.Neutrino;
             case LabPerk.NobleDash: return ProcSprites.Arrow;
@@ -229,6 +264,12 @@ public partial class GameUI
             case LabPerk.NobleProclaim: return ProcSprites.Ring;
             case LabPerk.RadiantSides: return ProcSprites.Trefoil;
             case LabPerk.RadiantWaves: return ProcSprites.Ring;
+            case LabPerk.ConductSuper: return ProcSprites.Bolt;
+            case LabPerk.ConductPlating: return ProcSprites.Electron;
+            case LabPerk.HalogenHunter: return ProcSprites.Shard;
+            case LabPerk.HalogenCorrosion: return ProcSprites.Spiky;
+            case LabPerk.AlkaliViolent: return ProcSprites.Ring;
+            case LabPerk.AlkaliBoomerang: return ProcSprites.Arrow;
             default: return IconFor(GameManager.CharacterCard(Lab.CharacterOf(p)));
         }
     }
@@ -247,6 +288,7 @@ public partial class GameUI
             case LabPerk.Research: return Lab.DataColor;
             case LabPerk.RareChance: return new Color(0.85f, 0.65f, 1f);
             case LabPerk.CharacterChance: return CardGold;
+            case LabPerk.ProbabilityAmplitude: return new Color(0.62f, 0.72f, 1f);
             default:
                 GameManager.Character owner = UpgradeOwner(p);
                 return GameManager.UpgradeColor(GameManager.CharacterCard(owner != GameManager.Character.None ? owner : Lab.CharacterOf(p)));
@@ -308,7 +350,7 @@ public partial class GameUI
         var zones = LabAnchor(labWorld);
         for (int b = 0; b < 3; b++)
         {
-            Vector2 zc = LabPolar(b == 2 ? 460f : 430f, LabBranchAngle[b]);
+            Vector2 zc = LabPolar(b == 2 ? 580f : 430f, LabBranchAngle[b]);
             var z = Icon(zones, ProcSprites.Glow, 900, WithAlpha(LabBranchColor[b], 0.085f));
             z.style.position = Position.Absolute;
             z.style.left = zc.x - 450;
@@ -350,7 +392,7 @@ public partial class GameUI
             n.radius = spec.r > 0f ? spec.r : LabRings[spec.tier];
             n.angle = LabBranchAngle[n.branch] + spec.offset;
             n.pos = LabPolar(n.radius, n.angle);
-            n.size = spec.keystone ? 64f : spec.tier == 1 ? 60f : n.branch == 2 && spec.tier == 3 ? 48f : 52f;
+            n.size = spec.keystone ? 64f : spec.tier == 1 ? 60f : spec.tier == 4 ? 48f : 52f;
             BuildLabNode(map, n);
             labNodes.Add(n);
             labByPerk[(int)n.perk] = n;

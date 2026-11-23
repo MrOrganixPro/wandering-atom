@@ -68,6 +68,18 @@ public partial class GameManager
     public float overchargeRadius = 2f;
     public const int MaxConductivity = 5;
 
+    [Header("Character Lab upgrades")]
+    [Tooltip("Lab Electroplating: chance an enemy destroyed by a zap drops an electron.")]
+    [Range(0f, 1f)] public float platingChance = 0.3f;
+    [Tooltip("Lab Radical Hunter: how fast free radicals turn toward a halogen (deg/s).")]
+    public float radicalHuntTurnRate = 40f;
+    [Tooltip("Lab Corrosion: enemy speed inside a halogen's electron cloud (fraction).")]
+    [Range(0f, 1f)] public float corrosionSlow = 0.55f;
+    [Tooltip("Lab Corrosion: reaches this far past the outermost electrons.")]
+    public float corrosionMargin = 0.8f;
+    [Tooltip("Lab Violent Reaction: seconds the alkali blast keeps burning.")]
+    public float alkaliFireTime = 1f;
+
     public static readonly Color HalogenColor = new Color(0.75f, 1f, 0.4f);
     public static readonly Color AlkaliColor = new Color(1f, 0.62f, 0.25f);
     public static readonly Color ConductiveColor = new Color(0.95f, 0.9f, 0.35f);
@@ -147,6 +159,17 @@ public partial class GameManager
         Sfx.Play("orb");
         Sfx.Play("lock", 0.5f);
         return true;
+    }
+
+    /// <summary>Lab Radical Hunter: free radicals home in on a halogen (deg/s; 0 when off).</summary>
+    public float RadicalHuntTurnRate => IsHalogen && Lab.Has(LabPerk.HalogenHunter) ? radicalHuntTurnRate : 0f;
+
+    /// <summary>Lab Corrosion: speed multiplier for an enemy at p (inside a halogen's electron cloud: slowed).</summary>
+    public float CorrosionFactor(Vector2 p)
+    {
+        if (!IsHalogen || !Lab.Has(LabPerk.HalogenCorrosion)) return 1f;
+        float r = pendulum.ElectronCloudRadius + corrosionMargin;
+        return (p - pendulum.PivotPosition).sqrMagnitude < r * r ? corrosionSlow : 1f;
     }
 
     public float AlkaliThrowRange => alkaliThrowRange + upgAlkaliRange * alkaliRangePerUpgrade;
@@ -233,6 +256,14 @@ public partial class GameManager
         conductTimer = 0f;
     }
 
+    /// <summary>Lab Superconductor: the Conductive starts every level fully charged.</summary>
+    void SuperconductOnLevelStart()
+    {
+        if (!IsConductive || !Lab.Has(LabPerk.ConductSuper)) return;
+        conductivity = MaxConductivity;
+        conductTimer = 0f;
+    }
+
     /// <summary>Every frame of play.</summary>
     void UpdateTraits(float dt)
     {
@@ -315,6 +346,8 @@ public partial class GameManager
             Vector2 q = next.Position;
             points.Add(q);
             next.Shot(q - p);
+            // Lab Electroplating: a zapped-out enemy sometimes leaves an electron behind.
+            if (next.IsDead && Lab.Has(LabPerk.ConductPlating) && Random.value < platingChance) DropElectron(q);
             p = q;
             next = NearestEnemy(p, ZapRange, hit);
         }
@@ -493,13 +526,15 @@ public class AlkaliShot : MonoBehaviour
             if (pc == null || !pc.IsAlive) { Finish(); return; }
             speed = Mathf.Min(speed + 70f * dt, 34f);
             Vector2 home = pc.PivotPosition;
-            pos = Vector2.MoveTowards(pos, home, speed * dt);
+            Vector2 back = Vector2.MoveTowards(pos, home, speed * dt);
+            if (Lab.Has(LabPerk.AlkaliBoomerang)) VaporizeAlong(pos, back);   // Lab Boomerang: deadly on the way back too
+            pos = back;
             if ((pos - home).sqrMagnitude < 0.3f * 0.3f) { Finish(); return; }
         }
         transform.position = pos;
     }
 
-    void HitAlong(Vector2 a, Vector2 b)
+    void VaporizeAlong(Vector2 a, Vector2 b)
     {
         Color c = GameManager.AlkaliColor;
         for (int i = EnemyMover.All.Count - 1; i >= 0; i--)
@@ -508,6 +543,12 @@ public class AlkaliShot : MonoBehaviour
             if (e == null || e.IsDead) continue;
             if (SegmentDistance(e.Position, a, b) <= gm.AlkaliPathRadius + e.radius) e.Vaporize(c);
         }
+    }
+
+    void HitAlong(Vector2 a, Vector2 b)
+    {
+        Color c = GameManager.AlkaliColor;
+        VaporizeAlong(a, b);
         foreach (var h in Hazard.All)
         {
             if (h == null || shoved.Contains(h)) continue;
@@ -541,6 +582,7 @@ public class AlkaliShot : MonoBehaviour
         ParticleBursts.Burst(pos, Color.white, 14, 6f, 0.2f, 0.35f);
         Sfx.Play("explode", 0.5f);
         gm.AddShake(0.3f);
+        if (Lab.Has(LabPerk.AlkaliViolent)) AlkaliFire.Spawn(pos, r, gm.alkaliFireTime);   // Lab Violent Reaction
     }
 
     static float SegmentDistance(Vector2 p, Vector2 a, Vector2 b)
@@ -563,6 +605,64 @@ public class AlkaliShot : MonoBehaviour
     void OnDestroy()
     {
         if (Current == this) Current = null;
+    }
+}
+
+/// <summary>
+/// Alkali Metal, Lab Violent Reaction: the blast keeps burning for a moment; any enemy that
+/// enters the fire is destroyed.
+/// </summary>
+public class AlkaliFire : MonoBehaviour
+{
+    Vector2 center;
+    float radius, life, t, emit;
+    SpriteRenderer glow;
+
+    public static void Spawn(Vector2 at, float radius, float life)
+    {
+        if (life <= 0f) return;
+        var go = new GameObject("AlkaliFire");
+        go.transform.position = at;
+        var f = go.AddComponent<AlkaliFire>();
+        f.center = at;
+        f.radius = radius;
+        f.life = life;
+        var g = new GameObject("Glow");
+        g.transform.SetParent(go.transform, false);
+        g.transform.localScale = Vector3.one * radius * 2.6f;
+        f.glow = g.AddComponent<SpriteRenderer>();
+        f.glow.sprite = ProcSprites.Glow;
+        f.glow.sortingOrder = 39;
+    }
+
+    void Update()
+    {
+        float dt = Time.deltaTime;
+        if (dt <= 0f) return;
+        t += dt;
+        float k = Mathf.Clamp01(t / life);
+        Color c = GameManager.AlkaliColor;
+        float flicker = 0.85f + 0.15f * Mathf.Sin(t * 37f);
+        glow.color = new Color(c.r, c.g * 0.85f, c.b * 0.6f, 0.6f * (1f - k * k) * flicker);
+
+        for (int i = EnemyMover.All.Count - 1; i >= 0; i--)
+        {
+            var e = EnemyMover.All[i];
+            if (e == null || e.IsDead) continue;
+            if (Vector2.Distance(e.Position, center) <= radius + e.radius) e.Vaporize(c);
+        }
+
+        // Flames licking up across the patch.
+        emit -= dt;
+        while (emit <= 0f)
+        {
+            emit += 0.012f;
+            Vector2 p = center + Random.insideUnitCircle * radius * 0.9f;
+            Color fc = Color.Lerp(c, new Color(1f, 0.9f, 0.4f), Random.value);
+            ParticleBursts.Emit(p, new Vector2(Random.Range(-0.5f, 0.5f), Random.Range(1.5f, 3.5f)), fc, Random.Range(0.08f, 0.16f), 0.35f, 1f);
+        }
+
+        if (t >= life) Destroy(gameObject);
     }
 }
 

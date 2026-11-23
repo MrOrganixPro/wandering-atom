@@ -74,7 +74,7 @@ public partial class GameManager : MonoBehaviour
     /// <summary>
     /// Every upgrade belongs to exactly one tier:
     /// Normal (1 coin), Rare (1 coin, special card, rarely offered) and
-    /// Character (2 coins, uncommon mystery box, at most one per run, changes how the game plays).
+    /// Character (1 coin, uncommon mystery box, at most one per run, changes how the game plays).
     /// </summary>
     public enum UpgradeTier { Normal, Rare, Character }
 
@@ -212,9 +212,9 @@ public partial class GameManager : MonoBehaviour
     [Tooltip("The fastest it gets (fraction of the first quantum's timing).")]
     [Range(0.1f, 1f)] public float upgradeMinPace = 0.3f;
 
-    [Header("Characters (uncommon mystery box, costs 2 coins, one per run)")]
+    [Header("Characters (uncommon mystery box, costs 1 coin, one per run)")]
     [FormerlySerializedAs("gameChangerUnlockLevel")] public int characterUnlockLevel = 5;
-    [Tooltip("Chance the first pick after a level (with every coin collected) includes a Character box.")]
+    [Tooltip("Chance a pick includes a Character box.")]
     [FormerlySerializedAs("gameChangerChance")]
     [Range(0f, 1f)] public float characterChance = 0.05f;
     public float mysteryRevealTime = 2.4f;
@@ -273,6 +273,7 @@ public partial class GameManager : MonoBehaviour
     int upgSpin, upgGroundState;                          // normal
     int upgPhotoelectric, upgResonance;                   // rare, once per run
     int coinRecycleProgress, heartRecycleProgress;        // orbs recycled toward the next coin / heart
+    int rarePity, characterPity;                          // Lab Probability Amplitude: rolls missed in a row this run
     int levelCoins, pendingChoices, choiceIndex, choiceTotal, refundTotal, offerVersion;
     readonly List<UpgradeType> offer = new List<UpgradeType>();
     Character character = Character.None;
@@ -294,26 +295,22 @@ public partial class GameManager : MonoBehaviour
     // Energy levels: filling a shell with electrons gives +1 quantum per level from the next level.
     const string ShellLessonKey = "Pendulum_ShellLessonSeen";
     const string NobleLessonKey = "Pendulum_NobleLessonSeen";
-    const string GuideKey = "Pendulum_GuideSeen";
+    // The first photon, electron and quantum ever collected each get a lesson; until then, a
+    // trail of chevrons around the atom points at the nearest one (GameUI.Guide).
+    const string PhotonLessonKey = "Pendulum_PhotonLessonSeen";
+    const string ElectronLessonKey = "Pendulum_ElectronLessonSeen";
+    const string QuantumLessonKey = "Pendulum_QuantumLessonSeen";
 
-    /// <summary>Dev: the saved "already shown" flags of the lessons and the first-run guide.</summary>
-    public static readonly string[] TutorialKeys = { ShellLessonKey, NobleLessonKey, HalogenLessonKey, AlkaliLessonKey, GuideKey };
+    /// <summary>Dev: the saved "already shown" flags of the lessons.</summary>
+    public static readonly string[] TutorialKeys = { ShellLessonKey, NobleLessonKey, HalogenLessonKey, AlkaliLessonKey,
+                                                     PhotonLessonKey, ElectronLessonKey, QuantumLessonKey };
     public static string StoryKey => StorySeenKey;
 
-    /// <summary>
-    /// The first-run guide (GameUI.Guide): photon, then electron, then quantum, each pointed at
-    /// until one is collected. Marked as seen only once all three are done.
-    /// </summary>
-    public enum GuideStep { None, Photon, Electron, Quantum }
-    GuideStep guide;
-    Pickup guideTarget;
-    public GuideStep Guide => guide;
-    public Pickup GuideTarget => guide != GuideStep.None && guideTarget != null ? guideTarget : null;
     const string HalogenLessonKey = "Pendulum_HalogenLessonSeen";
     const string AlkaliLessonKey = "Pendulum_AlkaliLessonSeen";
 
     /// <summary>The one-time lessons (the game freezes and the lines fade in one by one).</summary>
-    public enum LessonKind { Shell, Noble, Halogen, Alkali }
+    public enum LessonKind { Shell, Noble, Halogen, Alkali, Photon, Electron, Quantum }
     public LessonKind TeachingKind { get; private set; }
     /// <summary>Goes up with every lesson shown (the UI rebuilds its lines when it changes).</summary>
     public int LessonVersion { get; private set; }
@@ -619,6 +616,7 @@ public partial class GameManager : MonoBehaviour
         upgInsight = upgCoinRecycler = upgHealthRecycler = 0;
         upgSpin = upgGroundState = upgPhotoelectric = upgResonance = 0;
         coinRecycleProgress = heartRecycleProgress = 0;
+        rarePity = characterPity = 0;
         ResetTraits();
         character = Character.None;
         upgOrbitals = Lab.Level(LabPerk.StartOrbital);   // Lab: start with New Orbitals
@@ -780,12 +778,13 @@ public partial class GameManager : MonoBehaviour
             UpgradeType t = offer[i]; offer[i] = offer[j]; offer[j] = t;
         }
 
-        // Character mystery box: only on the first pick, only if every coin of the level was
-        // collected (it costs two), only from the unlock level, and only once per run.
+        // Character mystery box: any pick, from the unlock level, until a character is taken.
+        // Lab Probability Amplitude: every roll that misses adds +1% until one shows up (then back to base).
         mysteryIndex = -1;
-        bool eligible = character == Character.None && level >= characterUnlockLevel
-                        && choiceIndex == 0 && pendingChoices >= 2 && choiceTotal >= levelQuanta;
-        if (eligible && Random.value < characterChance + Lab.CharacterChancePerLevel * Lab.Level(LabPerk.CharacterChance))
+        bool balance = Lab.Has(LabPerk.ProbabilityAmplitude);
+        bool eligible = character == Character.None && level >= characterUnlockLevel;
+        if (eligible && Random.value < characterChance + Lab.CharacterChancePerLevel * Lab.Level(LabPerk.CharacterChance)
+                                       + Lab.AmplitudePerMiss * characterPity)
         {
             UpgradeType[] characters = { UpgradeType.Challenger, UpgradeType.Sluggish, UpgradeType.Spaceship, UpgradeType.Conductive,
                                      UpgradeType.Halogen, UpgradeType.Alkali, UpgradeType.Excited };
@@ -797,6 +796,7 @@ public partial class GameManager : MonoBehaviour
             }
             else { offer.Add(gc); mysteryIndex = offer.Count - 1; }
         }
+        if (eligible) characterPity = mysteryIndex >= 0 ? 0 : balance ? characterPity + 1 : 0;
 
         // Rare card: replaces one normal card (never the mystery box). Each rare is once per run.
         var rares = new List<UpgradeType>();
@@ -806,16 +806,20 @@ public partial class GameManager : MonoBehaviour
         if (upgHealthRecycler == 0) rares.Add(UpgradeType.HealthRecycler);
         if (upgPhotoelectric == 0 && character != Character.Challenger) rares.Add(UpgradeType.Photoelectric);
         if (upgResonance == 0 && character != Character.Challenger) rares.Add(UpgradeType.Resonance);
-        if (rares.Count > 0 && level >= rareUnlockLevel && Random.value < rareChance + Lab.RareChancePerLevel * Lab.Level(LabPerk.RareChance))
+        bool rareRoll = rares.Count > 0 && level >= rareUnlockLevel;
+        bool rareFound = false;
+        if (rareRoll && Random.value < rareChance + Lab.RareChancePerLevel * Lab.Level(LabPerk.RareChance)
+                                       + Lab.AmplitudePerMiss * rarePity)
         {
             UpgradeType rare = rares[Random.Range(0, rares.Count)];
-            if (offer.Count < upgradeChoices) offer.Add(rare);
+            if (offer.Count < upgradeChoices) { offer.Add(rare); rareFound = true; }
             else
             {
                 int slot = ReplaceableSlot(mysteryIndex);
-                if (slot >= 0) offer[slot] = rare;
+                if (slot >= 0) { offer[slot] = rare; rareFound = true; }
             }
         }
+        if (rareRoll) rarePity = rareFound ? 0 : balance ? rarePity + 1 : 0;
 
         for (int i = 0; i < offer.Count; i++)
             if (i != mysteryIndex) Codex.See(Codex.Upgrade(offer[i]));
@@ -868,7 +872,7 @@ public partial class GameManager : MonoBehaviour
         if (index == mysteryIndex && stateTime < MysteryOpenTime) return;   // still sealed
 
         UpgradeType picked = offer[index];
-        int cost = IsCharacter(picked) ? 2 : 1;
+        const int cost = 1;
         switch (picked)
         {
             case UpgradeType.Heal: lives = MaxHealth; break;
@@ -1282,14 +1286,15 @@ public partial class GameManager : MonoBehaviour
         if (abilityAiming) EndAbilityAim(false);   // the level sets the time scale itself
         abilityCooldown = 0f;
         AlkaliShot.ReturnAll();
+        SuperconductOnLevelStart();
         if (hardReset) ResetConductivity();
         // Quanta for this level; the ones earned last level (a filled energy level) are new.
         levelQuanta = CoinsPerLevel;
         newQuanta = character == Character.Challenger ? 0 : Mathf.Min(pendingNewQuanta, levelQuanta);
         pendingNewQuanta = 0;
         if (hardReset) lives = MaxHealth;
-        if (hardReset && level == 1) guide = PlayerPrefs.GetInt(GuideKey, 0) == 0 ? GuideStep.Photon : GuideStep.None;
-        else if (upgRegen > 0 && lives < MaxHealth)
+        for (int i = 0; i < guideTargets.Length; i++) guideTargets[i] = null;
+        if (!(hardReset && level == 1) && upgRegen > 0 && lives < MaxHealth)
         {
             lives++;   // Regeneration (rare upgrade)
             Sfx.Play("orb");
@@ -1300,7 +1305,7 @@ public partial class GameManager : MonoBehaviour
         heartAvailable = Random.value < heartChancePerLevel * find;
         heartTimer = Random.Range(heartMinInterval, heartMaxInterval);
         // Lab Stabilizers: a level that starts below max stability may have a stability point
-        // lying around from the start (20% per level of research).
+        // lying around from the start (+5% per level of research).
         if (lives < MaxHealth && Random.value < Lab.StabilityPickupPerLevel * Lab.Level(LabPerk.StabilityPickup) * find)
         {
             heartAvailable = true;
@@ -1417,11 +1422,24 @@ public partial class GameManager : MonoBehaviour
             if (!NearHazard(pos) && !TooClose(pos, stars) && !TooClose(pos, orbs) && !TooClose(pos, extras)) break;
         }
 
+        return SpawnPickupAt(kind, pos);
+    }
+
+    Pickup SpawnPickupAt(PickupKind kind, Vector2 pos)
+    {
         var go = new GameObject(kind.ToString());
         go.transform.position = pos;
         var p = go.AddComponent<Pickup>();
         p.Init(kind, OnPickupCollected);
         return p;
+    }
+
+    /// <summary>A collectible electron left where something was destroyed (Lab Electroplating).</summary>
+    void DropElectron(Vector2 at)
+    {
+        if (state != State.Playing) return;
+        orbs.Add(SpawnPickupAt(PickupKind.Orb, at));
+        ParticleBursts.Burst(at, Pickup.OrbColor, 12, 4f, 0.2f, 0.4f);
     }
 
     static bool NearHazard(Vector2 pos)
@@ -1583,7 +1601,10 @@ public partial class GameManager : MonoBehaviour
         extras.Remove(p);
         if (state != State.Playing) return;
         Codex.See(Codex.Particle(p.Kind));   // the Index's Particles tab
-        if (guide != GuideStep.None && p.Kind == GuideKind(guide)) AdvanceGuide();
+        // The first ever photon / electron / quantum: what it is (not on the photon that ends the level).
+        if (p.Kind == PickupKind.Star && starsCollected + 1 < starsNeeded) Teach(LessonKind.Photon, PhotonLessonKey);
+        else if (p.Kind == PickupKind.Orb && ElectronsTeachable && !pendulum.IsFull) Teach(LessonKind.Electron, ElectronLessonKey);
+        else if (p.Kind == PickupKind.Coin) Teach(LessonKind.Quantum, QuantumLessonKey);
 
         switch (p.Kind)
         {
@@ -1621,46 +1642,41 @@ public partial class GameManager : MonoBehaviour
 
     // ------------------------------------------------------------- first-run guide
 
-    static PickupKind GuideKind(GuideStep g) =>
-        g == GuideStep.Photon ? PickupKind.Star : g == GuideStep.Electron ? PickupKind.Orb : PickupKind.Coin;
+    /// <summary>The kinds the guide points at (photon, electron, quantum), in GameUI's order.</summary>
+    public static readonly PickupKind[] GuideKinds = { PickupKind.Star, PickupKind.Orb, PickupKind.Coin };
+    readonly Pickup[] guideTargets = new Pickup[3];
 
-    void AdvanceGuide()
-    {
-        guide = guide == GuideStep.Photon ? GuideStep.Electron : guide == GuideStep.Electron ? GuideStep.Quantum : GuideStep.None;
-        guideTarget = null;
-        if (guide == GuideStep.None)
-        {
-            PlayerPrefs.SetInt(GuideKey, 1);
-            PlayerPrefs.Save();
-        }
-    }
+    // The Lonely Ion can't hold electrons: no electron lesson (or pointer) while playing it.
+    bool ElectronsTeachable => character != Character.Challenger;
 
-    /// <summary>Points at the nearest pickup of the current kind; a step with none on the map is skipped.</summary>
-    void UpdateGuide()
+    static string GuideLessonKey(int i) => i == 0 ? PhotonLessonKey : i == 1 ? ElectronLessonKey : QuantumLessonKey;
+
+    /// <summary>
+    /// The pickup the guide's chevrons for GuideKinds[i] point at: the nearest one, until the
+    /// first one of that kind ever is collected (its lesson seen). Null otherwise.
+    /// </summary>
+    public Pickup GuideTarget(int i)
     {
-        for (int guard = 0; guard < 3 && guide != GuideStep.None; guard++)
+        if (state != State.Playing || pendulum == null || PlayerPrefs.GetInt(GuideLessonKey(i), 0) != 0) return null;
+        PickupKind kind = GuideKinds[i];
+        if (kind == PickupKind.Orb && !ElectronsTeachable) return null;
+        List<Pickup> list = kind == PickupKind.Star ? stars : kind == PickupKind.Orb ? orbs : extras;
+        Pickup best = null;
+        float bestD = float.MaxValue;
+        Vector2 at = pendulum.PivotPosition;
+        foreach (var q in list)
         {
-            PickupKind kind = GuideKind(guide);
-            List<Pickup> list = kind == PickupKind.Star ? stars : kind == PickupKind.Orb ? orbs : extras;
-            Pickup best = null;
-            float bestD = float.MaxValue;
-            Vector2 at = pendulum.PivotPosition;
-            foreach (var q in list)
-            {
-                if (q == null || q.Kind != kind) continue;
-                float d = ((Vector2)q.transform.position - at).sqrMagnitude;
-                if (d < bestD) { bestD = d; best = q; }
-            }
-            // Keep pointing at the same one unless another is much closer (no flicker between two).
-            if (guideTarget != null && guideTarget.Kind == kind && list.Contains(guideTarget) && best != null
-                && ((Vector2)guideTarget.transform.position - at).sqrMagnitude < bestD * 2.25f)
-                best = guideTarget;
-            guideTarget = best;
-            if (best != null) return;
-            // Electrons can't be held (Lonely Ion, or none left) / no quanta this level: skip it.
-            if (kind == PickupKind.Star) return;   // more photons come; wait for them
-            AdvanceGuide();
+            if (q == null || q.Kind != kind) continue;
+            float d = ((Vector2)q.transform.position - at).sqrMagnitude;
+            if (d < bestD) { bestD = d; best = q; }
         }
+        // Keep pointing at the same one unless another is much closer (no flicker between two).
+        Pickup last = guideTargets[i];
+        if (last != null && best != null && list.Contains(last)
+            && ((Vector2)last.transform.position - at).sqrMagnitude < bestD * 2.25f)
+            best = last;
+        guideTargets[i] = best;
+        return best;
     }
 
     /// <summary>Photoelectric Effect: the photon knocks electrons loose around where it was caught.</summary>
@@ -1844,7 +1860,6 @@ public partial class GameManager : MonoBehaviour
                 UpdateNeutrinoPickup(Time.deltaTime);
                 CheckEnergyLevels();
                 UpdateTraits(Time.deltaTime);
-                UpdateGuide();
                 if (kb != null && kb.spaceKey.wasPressedThisFrame && Ability != AbilityKind.None
                     && Time.frameCount != teachEndFrame && !teaching)
                     ToggleAbilityAim();

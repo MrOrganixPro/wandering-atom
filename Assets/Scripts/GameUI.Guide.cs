@@ -2,105 +2,116 @@ using UnityEngine;
 using UnityEngine.UIElements;
 
 /// <summary>
-/// The first-run guide: on the first level ever, a small callout points at a photon, then (once
-/// one is collected) an electron, then a quantum, saying what each is for. The game doesn't
-/// stop; each callout follows its pickup and stays on screen if the pickup is off it.
+/// The first-run guide: until the first photon, electron and quantum ever are collected, a
+/// short trail of chevrons (the speed bar's arrow) sits just outside the atom for each of them,
+/// in its color, pointing at the nearest one. Every so often a shine runs along the trail to
+/// catch the eye. Collecting the first one opens its lesson (GameUI.Lesson) and its trail goes.
 /// </summary>
 public partial class GameUI
 {
-    VisualElement guideBox, guideStem;
-    Label guideTitle, guideBody;
-    GameManager.GuideStep shownGuide = GameManager.GuideStep.None;
-    float guideAlpha, guidePop;
+    const int GuideChevrons = 3;
+    const float GuideChevronSize = 22f;
+    const float GuideChevronStep = 15f;   // between chevrons along the trail
+    const float GuideGap = 26f;           // from the nucleus' edge to the first chevron
+    const float GuideShineEvery = 2.4f;   // seconds between shines
+    const float GuideShineTime = 0.55f;   // a shine's run along the trail
+
+    class GuideTrail
+    {
+        public VisualElement root;
+        public readonly VisualElement[] chevrons = new VisualElement[GuideChevrons];
+        public Color color;
+        public float alpha, angle;
+        public bool aimed;
+    }
+
+    readonly GuideTrail[] guideTrails = new GuideTrail[3];
 
     void BuildGuide()
     {
-        guideBox = Box(hud);
-        guideBox.style.position = Position.Absolute;
-        guideBox.style.width = 300;
-        guideBox.style.alignItems = Align.Center;
-
-        var panel = Box(guideBox);
-        panel.style.alignItems = Align.Center;
-        panel.style.paddingLeft = panel.style.paddingRight = 14;
-        panel.style.paddingTop = 8;
-        panel.style.paddingBottom = 10;
-        panel.style.backgroundColor = WithAlpha(Panel, 0.88f);
-        Radius(panel, 10);
-        guideTitle = Text(panel, "", 20, true, Color.white);
-        guideTitle.style.letterSpacing = 5;
-        guideBody = Text(panel, "", 15, false, WithAlpha(Color.white, 0.9f), TextAnchor.MiddleCenter, true);
-        guideBody.style.marginTop = 3;
-        guideBody.style.maxWidth = 272;
-
-        guideStem = Box(guideBox);   // a short line down to the pickup
-        guideStem.style.width = 2;
-        guideStem.style.height = 22;
-        guideBox.style.opacity = 0f;
-        shownGuide = GameManager.GuideStep.None;
+        for (int i = 0; i < guideTrails.Length; i++)
+        {
+            var t = new GuideTrail { color = Pickup.ColorOf(GameManager.GuideKinds[i]) };
+            // A zero-size anchor at the atom's center; the trail runs along its +x, rotated to the target.
+            t.root = Box(hud);
+            t.root.style.position = Position.Absolute;
+            t.root.style.width = t.root.style.height = 0;
+            t.root.style.transformOrigin = new TransformOrigin(0, 0);
+            t.root.pickingMode = PickingMode.Ignore;
+            for (int k = 0; k < GuideChevrons; k++)
+            {
+                var c = Icon(t.root, ProcSprites.Arrow, GuideChevronSize, t.color);
+                c.style.position = Position.Absolute;
+                c.style.top = -GuideChevronSize * 0.5f;
+                c.pickingMode = PickingMode.Ignore;
+                t.chevrons[k] = c;
+            }
+            t.root.style.opacity = 0f;
+            Show(t.root, false);
+            guideTrails[i] = t;
+        }
     }
 
     void UpdateGuide(GameManager.State st)
     {
-        if (guideBox == null) return;
-        Pickup target = gm.GuideTarget;
-        bool show = target != null && st == GameManager.State.Playing && !gm.Teaching && !gm.AbilityAiming;
+        if (guideTrails[0] == null) return;
         float dt = Time.unscaledDeltaTime;
-        guideAlpha = Mathf.MoveTowards(guideAlpha, show ? 1f : 0f, dt / 0.25f);
-        guideBox.style.opacity = guideAlpha;
-        Show(guideBox, guideAlpha > 0f);
-        if (!show && guideAlpha <= 0f) return;
-
-        if (gm.Guide != shownGuide && gm.Guide != GameManager.GuideStep.None)
-        {
-            shownGuide = gm.Guide;
-            guidePop = 1f;
-            Color c;
-            switch (shownGuide)
-            {
-                case GameManager.GuideStep.Photon:
-                    c = Pickup.Gold;
-                    guideTitle.text = Loc.T("PHOTON", "FOTON");
-                    guideBody.text = Loc.T("Collect " + gm.StarsNeeded + " to finish the level",
-                                           "Bölümü bitirmek için " + gm.StarsNeeded + " tane topla");
-                    break;
-                case GameManager.GuideStep.Electron:
-                    c = Pickup.OrbColor;
-                    guideTitle.text = Loc.T("ELECTRON", "ELEKTRON");
-                    guideBody.text = Loc.T("It becomes part of you: a new element, and a shield",
-                                           "Senin bir parçan olur: yeni bir element ve bir kalkan");
-                    break;
-                default:
-                    c = Pickup.CoinColor;
-                    guideTitle.text = Loc.T("QUANTUM", "KUANTUM");
-                    guideBody.text = Loc.T("Spend them on upgrades after the level",
-                                           "Bölümden sonra geliştirmelere harca");
-                    break;
-            }
-            guideTitle.style.color = c;
-            Border(guideTitle.parent, 2f, WithAlpha(c, 0.85f));
-            guideStem.style.backgroundColor = WithAlpha(c, 0.8f);
-            Sfx.Play("reveal", 0.45f);
-        }
-        guidePop = Mathf.MoveTowards(guidePop, 0f, dt / 0.35f);
-        float bob = Mathf.Sin(Time.unscaledTime * 3f) * 3f;
-        float s = 1f + 0.15f * guidePop * guidePop;
-        guideBox.style.scale = new Scale(new Vector3(s, s, 1f));
-
-        // Above its pickup, kept on screen.
         var cam = Camera.main;
-        if (target == null || cam == null || root.panel == null) return;
-        Vector2 p = RuntimePanelUtils.CameraTransformWorldToPanel(root.panel, target.transform.position, cam);
-        float W = hud.layout.width, H = hud.layout.height;
-        float h = guideBox.layout.height;
-        if (float.IsNaN(h) || h <= 0f) h = 90f;
-        float x = p.x - 150f, y = p.y - h - 26f + bob;
-        if (!float.IsNaN(W) && W > 0f)
+        PendulumController pc = gm.Pendulum;
+        bool canShow = st == GameManager.State.Playing && !gm.Teaching && !gm.AbilityAiming
+                       && cam != null && pc != null && root.panel != null;
+
+        Vector2 at = Vector2.zero;
+        float start = 0f;
+        if (canShow)
         {
-            x = Mathf.Clamp(x, 12f, W - 312f);
-            y = Mathf.Clamp(y, 110f, H - h - 60f);   // below the top HUD, above the speed bar
+            at = RuntimePanelUtils.CameraTransformWorldToPanel(root.panel, pc.PivotPosition, cam);
+            Vector2 edge = RuntimePanelUtils.CameraTransformWorldToPanel(root.panel,
+                pc.PivotPosition + Vector2.right * Mathf.Max(pc.NucleusRadius, pc.CoreRadius), cam);
+            start = Vector2.Distance(at, edge) + GuideGap;
         }
-        guideBox.style.left = x;
-        guideBox.style.top = y;
+
+        for (int i = 0; i < guideTrails.Length; i++)
+        {
+            GuideTrail t = guideTrails[i];
+            Pickup target = canShow ? gm.GuideTarget(i) : null;
+            bool show = false;
+            if (target != null)
+            {
+                Vector2 p = RuntimePanelUtils.CameraTransformWorldToPanel(root.panel, target.transform.position, cam);
+                Vector2 d = p - at;
+                // Not once it's right next to the atom (the trail would sit on top of it).
+                show = d.magnitude > start + GuideChevrons * GuideChevronStep + 30f;
+                if (show)
+                {
+                    float a = Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg;   // panel y is down: clockwise degrees
+                    t.angle = t.aimed ? Mathf.LerpAngle(t.angle, a, 1f - Mathf.Exp(-14f * dt)) : a;
+                    t.aimed = true;
+                }
+            }
+            t.alpha = Mathf.MoveTowards(t.alpha, show ? 1f : 0f, dt / 0.25f);
+            if (t.alpha <= 0f) t.aimed = false;
+            Show(t.root, t.alpha > 0f);
+            if (t.alpha <= 0f) continue;
+
+            t.root.style.left = at.x;
+            t.root.style.top = at.y;
+            t.root.style.rotate = new Rotate(t.angle);
+            t.root.style.opacity = t.alpha;
+
+            // The shine: a bright pulse runs outward along the chevrons (the trails take turns).
+            float clock = Mathf.Repeat(Time.unscaledTime + i * GuideShineEvery / 3f, GuideShineEvery);
+            float idle = 0.55f + 0.15f * Mathf.Sin(Time.unscaledTime * 3f + i);
+            for (int k = 0; k < GuideChevrons; k++)
+            {
+                float u = (clock - k * 0.12f) / (GuideShineTime * 0.6f);
+                float shine = u > 0f && u < 1f ? Mathf.Sin(u * Mathf.PI) : 0f;
+                var c = t.chevrons[k];
+                c.style.left = start + k * GuideChevronStep - GuideChevronSize * 0.5f;
+                c.style.unityBackgroundImageTintColor = Color.Lerp(WithAlpha(t.color, idle + 0.1f * k), Color.white, 0.75f * shine);
+                float s = 1f + 0.35f * shine;
+                c.style.scale = new Scale(new Vector3(s, s, 1f));
+            }
+        }
     }
 }

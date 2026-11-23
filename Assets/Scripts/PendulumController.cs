@@ -116,6 +116,12 @@ public class PendulumController : MonoBehaviour
     public float asteroidRepelMass = 6f;
     [Tooltip("Asteroids: an orb that grazes an asteroid takes one hit, then is safe from asteroids for this many seconds.")]
     public float asteroidHitCooldown = 0.6f;
+    [Tooltip("A bound electron that survives a hit glides along its orbital at this speed (units/s) until it is clear of what hit it.")]
+    public float escapeSpeed = 10f;
+    [Tooltip("After escaping it stays untouchable for this many more seconds (positrons still annihilate it).")]
+    public float escapeGrace = 0.3f;
+    [Tooltip("Gives up gliding after this long (something that keeps pace with it along the orbit).")]
+    public float escapeMaxTime = 2f;
     [Tooltip("Emergency booster: seconds of boost at level 1, and added per extra level.")]
     public float boostDuration = 1.5f;
     public float boostDurationPerLevel = 0.35f;
@@ -154,6 +160,12 @@ public class PendulumController : MonoBehaviour
         public int shell, hp;
         public float damageFlash;
         public float rockTimer;   // asteroid hit cooldown
+        // Escaping: after surviving a hit it glides along its orbital out of what hit it
+        // (untouchable meanwhile, and for 'ghost' seconds after).
+        public bool escaping;
+        public Transform escapeFrom;
+        public float escapeRadius, escapeDir, escapeTime, ghost;
+        public bool Untouchable => escaping || ghost > 0f;
         public SpriteRenderer armor;
         public Vector2 pos, vel;
         public bool taut = true;
@@ -191,6 +203,17 @@ public class PendulumController : MonoBehaviour
     public int HeldOut => heldOut;
     /// <summary>Every electron the atom has: orbiting, as emitters, and thrown out.</summary>
     public int ElectronTotal => balls.Count + turretCount + heldOut;
+
+    /// <summary>How far the electrons reach from the core: the outermost occupied energy level (plus an electron).</summary>
+    public float ElectronCloudRadius
+    {
+        get
+        {
+            int top = -1;
+            foreach (var b in balls) top = Mathf.Max(top, b.shell);
+            return top < 0 ? coreRadius + BallRadius : ShellLength(top) + BallRadius;
+        }
+    }
     /// <summary>The element the atom is right now: its electron count, emitters included (0 = bare hydrogen ion).</summary>
     public int AtomicNumber => ElectronTotal;
     /// <summary>Extra pickup reach from Pickup Range upgrades (world units).</summary>
@@ -863,6 +886,31 @@ public class PendulumController : MonoBehaviour
         b.taut = true;
         // Speed limit relative to the thruster: a fast thruster must not cap the forward-swinging balls.
         b.vel = pivotVel + Vector2.ClampMagnitude(b.vel - pivotVel, maxSpeed * Mathf.Max(1f, spinMult));
+
+        // Escaping a hit it survived: glide along the orbital until clear of what hit it.
+        if (b.escaping)
+        {
+            b.escapeTime += h;
+            float clearR = b.escapeRadius + BallRadius + 0.05f;
+            bool clear = b.escapeFrom == null || b.escapeTime >= escapeMaxTime
+                         || ((Vector2)b.escapeFrom.position - b.pos).sqrMagnitude >= clearR * clearR;
+            if (clear)
+            {
+                b.escaping = false;
+                b.escapeFrom = null;
+                b.ghost = escapeGrace;
+            }
+            else
+            {
+                float step = b.escapeDir * escapeSpeed * h / Mathf.Max(0.1f, L);
+                float cs = Mathf.Cos(step), sn = Mathf.Sin(step);
+                b.pos = pivot + new Vector2(n.x * cs - n.y * sn, n.x * sn + n.y * cs) * L;
+                // Don't let its own swing carry it back in against the glide.
+                Vector2 ccw = new Vector2(-n.y, n.x);
+                float vt = Vector2.Dot(b.vel - pivotVel, ccw) * b.escapeDir;
+                if (vt < 0f) b.vel -= ccw * b.escapeDir * vt;
+            }
+        }
     }
 
     /// <summary>Balls in a shell push toward the middle of the gap between their neighbours.</summary>
@@ -980,6 +1028,9 @@ public class PendulumController : MonoBehaviour
             b.snapFlash = Mathf.MoveTowards(b.snapFlash, 0f, dt * 5f);
             b.damageFlash = Mathf.MoveTowards(b.damageFlash, 0f, dt * 4f);
             b.rockTimer -= dt;
+            b.ghost -= dt;
+            if (b.escaping)   // a faint streak along the orbital while it glides out
+                ParticleBursts.Emit(b.pos, Vector2.zero, new Color(1f, 1f, 1f, 0.55f), 0.1f, 0.22f, 0f);
             float speed01 = (b.vel - pivotVel).magnitude / Mathf.Max(1f, maxSpeed);
             Color c = b == special ? AlkaliHighlight.Value : ShellColor(b.shell);
             if (b == special) speed01 = Mathf.Max(speed01, 0.5f + 0.3f * Mathf.Sin(Time.time * 6f));   // a bigger, pulsing glow
@@ -1176,10 +1227,12 @@ public class PendulumController : MonoBehaviour
     /// An enemy at p (radius r) touching an electron: the electron takes a hit. If that was its
     /// last one it leaves the atom (Taken): it is removed quietly and its position and color are
     /// returned, so the enemy can show it being snatched or knocked away. Electrons listed in
-    /// 'skip' are passed through (piercing gamma rays); the one hit is added to it.
+    /// 'skip' are passed through (piercing gamma rays); the one hit is added to it. An electron
+    /// that survives glides along its orbital out of 'from' (if given) and can't be hit meanwhile,
+    /// except by what ignores binding (positrons).
     /// </summary>
     public ElectronHit HitElectron(Vector2 p, float r, out Vector2 takenPos, out Color takenColor, List<object> skip = null,
-                                   bool ignoreBinding = false)
+                                   bool ignoreBinding = false, Transform from = null)
     {
         takenPos = p;
         takenColor = Pickup.OrbColor;
@@ -1189,11 +1242,13 @@ public class PendulumController : MonoBehaviour
         {
             Ball b = balls[i];
             if ((skip != null && skip.Contains(b)) || (b.pos - p).sqrMagnitude >= rb * rb) continue;
+            if (b.Untouchable && !ignoreBinding) continue;
             skip?.Add(b);
             OnHitReaction();
             if (!ignoreBinding && NobleBond > 0f)   // Noble Atom: an unbreakable bond
             {
                 NobleBlock(b);
+                BeginEscape(b, from, r);
                 return ElectronHit.Survived;
             }
             if (ignoreBinding) b.hp = 0;
@@ -1202,6 +1257,7 @@ public class PendulumController : MonoBehaviour
                 b.damageFlash = 1f;
                 ParticleBursts.Burst(b.pos, Color.white, 10, 4f, 0.2f, 0.4f);
                 Sfx.Play("snap", 0.8f);
+                BeginEscape(b, from, r);
                 return ElectronHit.Survived;
             }
             takenPos = b.pos;
@@ -1213,6 +1269,23 @@ public class PendulumController : MonoBehaviour
             return ElectronHit.Taken;
         }
         return ElectronHit.None;
+    }
+
+    /// <summary>
+    /// A bound electron survived a hit from 'from' (radius r): it glides along its orbital,
+    /// away from the side the object is on, until it's clear of it (see StepBall).
+    /// </summary>
+    void BeginEscape(Ball b, Transform from, float r)
+    {
+        if (from == null) return;
+        Vector2 rel = b.pos - PivotPosition;
+        Vector2 ccw = new Vector2(-rel.y, rel.x);
+        float side = Vector2.Dot(b.pos - (Vector2)from.position, ccw);
+        b.escaping = true;
+        b.escapeFrom = from;
+        b.escapeRadius = r;
+        b.escapeTime = 0f;
+        b.escapeDir = Mathf.Abs(side) > 1e-4f ? Mathf.Sign(side) : SpinDir;
     }
 
     /// <summary>Noble Atom: a hit that the bond shrugged off (a gold flash along it).</summary>
@@ -1393,7 +1466,9 @@ public class PendulumController : MonoBehaviour
     /// </summary>
     /// <param name="ejectSpeed">Extra outward speed given to the thruster on contact.</param>
     /// <param name="crushBalls">True for a well's core: balls are destroyed regardless of armor.</param>
-    public void HazardCircle(Vector2 c, float r, Vector2 hazardVel, Color col, float ejectSpeed, bool crushBalls = true)
+    /// <param name="source">The hazard itself: a bound electron that survives glides out of it.</param>
+    public void HazardCircle(Vector2 c, float r, Vector2 hazardVel, Color col, float ejectSpeed, bool crushBalls = true,
+                             Transform source = null)
     {
         if (!alive || meltingDown) return;
 
@@ -1413,6 +1488,7 @@ public class PendulumController : MonoBehaviour
             }
 
             // Asteroid: bounce off the surface, and lose one hit (then a short grace period).
+            if (b.Untouchable) continue;   // already gliding out of something
             float bd = off.magnitude;
             Vector2 bn = bd > 1e-4f ? off / bd : Vector2.up;
             b.pos = c + bn * rb;
@@ -1421,7 +1497,7 @@ public class PendulumController : MonoBehaviour
             if (b.rockTimer > 0f) continue;
             b.rockTimer = asteroidHitCooldown;
             hit = true;
-            if (NobleBond > 0f) { NobleBlock(b); continue; }   // Noble Atom: dust can't break the bond
+            if (NobleBond > 0f) { NobleBlock(b); BeginEscape(b, source, r); continue; }   // Noble Atom: dust can't break the bond
             if (--b.hp <= 0)
             {
                 if (GameManager.Instance != null) GameManager.Instance.TryConductiveZap(b.pos, null);
@@ -1429,6 +1505,7 @@ public class PendulumController : MonoBehaviour
             }
             else
             {
+                BeginEscape(b, source, r);
                 b.damageFlash = 1f;
                 ParticleBursts.Burst(b.pos, col, 10, 4f, 0.2f, 0.4f);
                 Sfx.Play("snap", 0.8f);

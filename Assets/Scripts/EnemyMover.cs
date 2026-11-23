@@ -240,6 +240,26 @@ public class EnemyMover : MonoBehaviour
         }
         if (dead) return;   // a Gamma Rain ray that finished its strike
 
+        var gm = GameManager.Instance;
+        // Lab Radical Hunter: free radicals are drawn to a halogen.
+        if (type == EnemyType.Shard && gm != null && pc != null && pc.IsAlive && speed > 0f)
+        {
+            float hunt = gm.RadicalHuntTurnRate;
+            if (hunt > 0f)
+            {
+                float angle = Vector2.SignedAngle(moveDirection, pc.PivotPosition - (Vector2)transform.position);
+                float turn = Mathf.Clamp(angle, -hunt * dt, hunt * dt);
+                moveDirection = (Quaternion.Euler(0f, 0f, turn) * moveDirection).normalized;
+                FaceDirection();
+            }
+        }
+        // Lab Corrosion: slowed inside a halogen's electron cloud.
+        float corroded = gm != null ? gm.CorrosionFactor(transform.position) : 1f;
+        if (corroded < 1f && Random.value < dt * 20f)
+            ParticleBursts.Emit((Vector2)transform.position + Random.insideUnitCircle * radius, Random.insideUnitCircle * 0.8f,
+                                new Color(GameManager.HalogenColor.r, GameManager.HalogenColor.g, GameManager.HalogenColor.b, 0.7f),
+                                0.07f, 0.3f, 2f);
+
         // Gravity wells bend the flight path (speed stays the same).
         if (speed > 0f)
         {
@@ -254,7 +274,7 @@ public class EnemyMover : MonoBehaviour
 
         // Move in sub-steps no longer than the enemy's radius so fast enemies can't tunnel through.
         lastPos = transform.position;
-        Vector2 delta = (moveDirection * speed + knock) * dt;
+        Vector2 delta = (moveDirection * speed * corroded + knock) * dt;
         knock *= Mathf.Exp(-KnockDrag * dt);
         float move = delta.magnitude;
         int steps = Mathf.Max(1, Mathf.CeilToInt(move / Mathf.Max(0.05f, radius)));
@@ -319,7 +339,7 @@ public class EnemyMover : MonoBehaviour
         Vector2 takenPos = p;
         Color takenColor = Pickup.OrbColor;
         // A positron annihilates any electron it touches, however tightly bound (armor doesn't help).
-        var hit = hitCooldown <= 0f ? pc.HitElectron(p, radius, out takenPos, out takenColor, null, type == EnemyType.Missile)
+        var hit = hitCooldown <= 0f ? pc.HitElectron(p, radius, out takenPos, out takenColor, null, type == EnemyType.Missile, transform)
                                     : PendulumController.ElectronHit.None;
         // Conductive: the electron becomes a zap instead of being taken; the zap is the damage dealt.
         if (hit == PendulumController.ElectronHit.Taken && gm != null && gm.TryConductiveZap(takenPos, this))
@@ -388,7 +408,7 @@ public class EnemyMover : MonoBehaviour
     bool CheckPierce(PendulumController pc, Vector2 p)
     {
         bool spent = false;
-        var hit = pc.HitElectron(p, radius, out Vector2 takenPos, out Color takenColor, pierced);
+        var hit = pc.HitElectron(p, radius, out Vector2 takenPos, out Color takenColor, pierced, false, transform);
         if (hit != PendulumController.ElectronHit.None)
         {
             ParticleBursts.Burst(p, Color.white, 12, 6f, 0.2f, 0.3f);

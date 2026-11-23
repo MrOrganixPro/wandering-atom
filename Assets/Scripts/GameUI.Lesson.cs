@@ -3,7 +3,8 @@ using UnityEngine.UIElements;
 
 /// <summary>
 /// The one-time lessons (the game freezes, the screen sinks into black and the lines fade in one
-/// by one): the first filled energy level (+1 quantum per level for the rest of the run, but a
+/// by one): the first photon, electron and quantum ever collected (its icon and what it is for),
+/// the first filled energy level (+1 quantum per level for the rest of the run, but a
 /// bigger pull), and the first noble gas, halogen and alkali metal powers of those characters; and
 /// showing off a newly unlocked quantum at the start of the next level (level intro + HUD).
 /// </summary>
@@ -11,7 +12,7 @@ public partial class GameUI
 {
     // The lesson: the frozen game sinks into darkness and the lines fade in one by one, like the story.
     VisualElement lessonScreen, lessonBody, lessonContinue;
-    readonly System.Collections.Generic.List<Label> lessonLines = new System.Collections.Generic.List<Label>();
+    readonly System.Collections.Generic.List<VisualElement> lessonLines = new System.Collections.Generic.List<VisualElement>();
     float lessonFade, lessonClock;
     bool lessonOn, lessonClicked;
 
@@ -61,6 +62,39 @@ public partial class GameUI
         lessonLines.Clear();
         switch (kind)
         {
+            case GameManager.LessonKind.Photon:
+            {
+                Color c = Pickup.ColorOf(PickupKind.Star);
+                AddLessonIcon(PickupKind.Star);
+                AddLessonLine(Loc.T("PHOTON", "FOTON"), 48, true, c, 6).style.marginBottom = 34;
+                AddLessonLine(Loc.T("A particle of light.", "Bir ışık parçacığı."), 30, false, StoryInk, 0);
+                string n = Hi(gm.StarsNeeded.ToString(), c);
+                AddLessonLine(Loc.T("Collect " + n + " to finish the level.", "Bölümü bitirmek için " + n + " tane topla."), 30, false, StoryInk, 0);
+                break;
+            }
+            case GameManager.LessonKind.Electron:
+            {
+                Color c = Pickup.ColorOf(PickupKind.Orb);
+                AddLessonIcon(PickupKind.Orb);
+                AddLessonLine(Loc.T("ELECTRON", "ELEKTRON"), 48, true, c, 6).style.marginBottom = 34;
+                string next = Hi(Loc.T("the next element", "bir sonraki element"), c);
+                AddLessonLine(Loc.T("It joins your orbit: you become " + next + ".", "Yörüngene katılır: " + next + " olursun."), 30, false, StoryInk, 0);
+                AddLessonLine(Loc.T("It also shields you from hits.", "Seni darbelere karşı da korur."), 30, false, StoryInk, 0);
+                break;
+            }
+            case GameManager.LessonKind.Quantum:
+            {
+                Color c = Pickup.ColorOf(PickupKind.Coin);
+                AddLessonIcon(PickupKind.Coin);
+                AddLessonLine(Loc.T("QUANTUM", "KUANTUM"), 48, true, c, 6).style.marginBottom = 34;
+                AddLessonLine(Loc.T("A packet of energy.", "Bir enerji paketi."), 30, false, StoryInk, 0);
+                string up = Hi(Loc.T("upgrades", "geliştirmelere"), c);
+                AddLessonLine(Loc.T("Spend quanta on " + up + " after the level.", "Bölümden sonra kuantaları " + up + " harca."), 30, false, StoryInk, 0).style.marginBottom = 34;
+                string more = Hi(Loc.T("+1 quantum", "+1 kuanta"), c);
+                AddLessonLine(Loc.T("Fill an energy level with electrons: " + more + " every level.",
+                                    "Bir enerji seviyesini elektronla doldur: her bölümde " + more + "."), 30, true, c, 0);
+                break;
+            }
             case GameManager.LessonKind.Noble:
             {
                 Color g = PendulumController.NobleGold;
@@ -114,6 +148,23 @@ public partial class GameUI
         l.style.opacity = 0f;
         lessonLines.Add(l);
         return l;
+    }
+
+    /// <summary>A pickup's icon in its glow, above a lesson's title (fades in like a line).</summary>
+    void AddLessonIcon(PickupKind kind)
+    {
+        Color c = Pickup.ColorOf(kind);
+        var box = Box(lessonBody);
+        box.style.width = box.style.height = 150;
+        box.style.marginBottom = 10;
+        box.style.alignItems = Align.Center;
+        box.style.justifyContent = Justify.Center;
+        var glow = Icon(box, ProcSprites.Glow, 150, WithAlpha(c, 0.45f));
+        glow.style.position = Position.Absolute;
+        glow.style.left = glow.style.top = 0;
+        Icon(box, Pickup.SpriteOf(kind), 84, c);
+        box.style.opacity = 0f;
+        lessonLines.Add(box);
     }
 
     float LessonAllShown => LessonFirstLine + (lessonLines.Count - 1) * LessonStagger + LessonLineFade;
