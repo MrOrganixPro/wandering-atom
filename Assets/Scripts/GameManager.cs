@@ -67,7 +67,8 @@ public partial class GameManager : MonoBehaviour
         AlkaliBlast, AlkaliRange, AlkaliPath,   // normal, only with the Alkali Metal
         Excited,                                // character
         AngularMomentum, GroundState,           // normal (Extras)
-        Photoelectric, Resonance                // rare
+        Photoelectric, Resonance,               // rare
+        AlkaliReload                            // normal, only with the Alkali Metal
     }
 
     /// <summary>
@@ -294,6 +295,10 @@ public partial class GameManager : MonoBehaviour
     const string ShellLessonKey = "Pendulum_ShellLessonSeen";
     const string NobleLessonKey = "Pendulum_NobleLessonSeen";
     const string GuideKey = "Pendulum_GuideSeen";
+
+    /// <summary>Dev: the saved "already shown" flags of the lessons and the first-run guide.</summary>
+    public static readonly string[] TutorialKeys = { ShellLessonKey, NobleLessonKey, HalogenLessonKey, AlkaliLessonKey, GuideKey };
+    public static string StoryKey => StorySeenKey;
 
     /// <summary>
     /// The first-run guide (GameUI.Guide): photon, then electron, then quantum, each pointed at
@@ -742,6 +747,7 @@ public partial class GameManager : MonoBehaviour
             if (upgAlkaliBlast < maxAlkaliUpgrades) extras.Add(UpgradeType.AlkaliBlast);
             if (upgAlkaliRange < maxAlkaliUpgrades) extras.Add(UpgradeType.AlkaliRange);
             if (upgAlkaliPath < maxAlkaliUpgrades) extras.Add(UpgradeType.AlkaliPath);
+            if (upgAlkaliReload < maxAlkaliUpgrades) extras.Add(UpgradeType.AlkaliReload);
         }
     }
 
@@ -922,6 +928,7 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.AlkaliBlast: upgAlkaliBlast = Mathf.Min(maxAlkaliUpgrades, upgAlkaliBlast + 1); break;
             case UpgradeType.AlkaliRange: upgAlkaliRange = Mathf.Min(maxAlkaliUpgrades, upgAlkaliRange + 1); break;
             case UpgradeType.AlkaliPath: upgAlkaliPath = Mathf.Min(maxAlkaliUpgrades, upgAlkaliPath + 1); break;
+            case UpgradeType.AlkaliReload: upgAlkaliReload = Mathf.Min(maxAlkaliUpgrades, upgAlkaliReload + 1); break;
         }
         ApplyUpgrades();
         Sfx.Play(IsCharacter(picked) ? "level" : "orb");
@@ -966,6 +973,7 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.AlkaliBlast: return Loc.T("BIGGER BLAST", "BÜYÜK PATLAMA");
             case UpgradeType.AlkaliRange: return Loc.T("LONGER THROW", "UZUN ATIŞ");
             case UpgradeType.AlkaliPath: return Loc.T("WIDER PATH", "GENİŞ YOL");
+            case UpgradeType.AlkaliReload: return Loc.T("QUICK RECOVERY", "HIZLI TOPARLANMA");
             case UpgradeType.BallSize: return Loc.T("BIGGER ELECTRONS", "BÜYÜK ELEKTRONLAR");
             case UpgradeType.PickupRange: return Loc.T("PICKUP RANGE", "TOPLAMA MENZİLİ");
             case UpgradeType.Repel: return Loc.T("REPEL", "İTME");
@@ -1079,6 +1087,8 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.AlkaliRange:
                 return "+" + alkaliRangePerUpgrade.ToString("0.#") + Loc.T(" throw range", " atış menzili");
             case UpgradeType.AlkaliPath: return Loc.T("Wider path that\ndestroys enemies", "Düşmanları yok eden\ndaha geniş yol");
+            case UpgradeType.AlkaliReload:
+                return "\u2212" + alkaliCooldownPerUpgrade.ToString("0.#") + Loc.T(" s throw cooldown", " sn atış bekleme süresi");
             default: return Loc.T("Electrons survive\n+1 more hit", "Elektronlar bir darbeye\ndaha dayanır");
         }
     }
@@ -1140,6 +1150,7 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.AlkaliBlast: return upgAlkaliBlast;
             case UpgradeType.AlkaliRange: return upgAlkaliRange;
             case UpgradeType.AlkaliPath: return upgAlkaliPath;
+            case UpgradeType.AlkaliReload: return upgAlkaliReload;
             default: return 0;
         }
     }
@@ -1184,7 +1195,8 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.HalogenSnatch: cap = maxHalogenUpgrades; return true;
             case UpgradeType.AlkaliBlast:
             case UpgradeType.AlkaliRange:
-            case UpgradeType.AlkaliPath: cap = maxAlkaliUpgrades; return true;
+            case UpgradeType.AlkaliPath:
+            case UpgradeType.AlkaliReload: cap = maxAlkaliUpgrades; return true;
             default: cap = 0; return false;
         }
     }
@@ -1228,6 +1240,7 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.AlkaliBlast: return new Color(1f, 0.45f, 0.3f);
             case UpgradeType.AlkaliRange: return new Color(1f, 0.8f, 0.45f);
             case UpgradeType.AlkaliPath: return new Color(1f, 0.7f, 0.6f);
+            case UpgradeType.AlkaliReload: return new Color(1f, 0.88f, 0.55f);
             default: return Pickup.OrbColor;
         }
     }
@@ -1580,6 +1593,7 @@ public partial class GameManager : MonoBehaviour
                 return;
             case PickupKind.Coin:
                 levelCoins++;
+                GameUI.GoalCollected(PickupKind.Coin, p.transform.position);   // flies to the HUD
                 Sfx.Play("coin");
                 return;
             case PickupKind.Heart:
@@ -1594,6 +1608,7 @@ public partial class GameManager : MonoBehaviour
         }
 
         starsCollected++;
+        GameUI.GoalCollected(PickupKind.Star, p.transform.position);   // flies to the HUD
         Sfx.Play("star");
         AddShake(0.15f);
         if (starsCollected >= starsNeeded) CompleteLevel();

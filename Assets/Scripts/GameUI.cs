@@ -77,7 +77,7 @@ public partial class GameUI : MonoBehaviour
     // ------------------------------------------------------------------ HUD
 
     VisualElement hud, speedBox, speedFill, pauseButton, controlsHint;
-    Pips starPips, coinPips, heartPips;
+    Pips heartPips;
     float controlsHintFade;
     bool controlsHintDone;
 
@@ -142,6 +142,7 @@ public partial class GameUI : MonoBehaviour
         root.Clear();
         buttons.Clear();
         floaters.Clear();
+        goalFlyers.Clear();
         builtOffer = -1;
         shownBadge = (GameManager.Character)(-1);
         shownElement = -999;
@@ -379,18 +380,12 @@ public partial class GameUI : MonoBehaviour
 
         BuildAtomCard(left);
 
-        var goals = Row(left);
-        goals.style.marginTop = 14;
-        goals.style.alignItems = Align.Center;
-        starPips = MakePips(goals, ProcSprites.Photon, 24, 3, 220);
-        starPips.row.style.justifyContent = Justify.FlexStart;
-        var split = Box(goals);   // a thin divider between the two goals
-        split.style.width = 1;
-        split.style.height = 20;
-        split.style.marginLeft = split.style.marginRight = 10;
-        split.style.backgroundColor = new Color(1f, 1f, 1f, 0.15f);
-        coinPips = MakePips(goals, ProcSprites.Quanta, 20, 4, 220);
-        coinPips.row.style.justifyContent = Justify.FlexStart;
+        // This level's goals: a line of photons, then a line of quanta (GameUI.Goals).
+        var goals = Box(left);
+        goals.style.marginTop = 12;
+        starGoal = MakeGoalPips(goals, ProcSprites.Photon, Pickup.Gold, 24f);
+        quantaGoal = MakeGoalPips(goals, ProcSprites.Quanta, Pickup.CoinColor, 20f);
+        quantaGoal.row.style.marginTop = 2;
 
         var run = Row(left);
         run.style.marginTop = 4;
@@ -878,9 +873,14 @@ public partial class GameUI : MonoBehaviour
         UpdateAbilityButton(st);
         UpdateGuide(st);
 
-        starPips.Set(gm.StarsNeeded, gm.StarsCollected, Pickup.Gold, Faint);
-        coinPips.Set(Mathf.Max(gm.LevelQuanta, gm.LevelCoins), gm.LevelCoins, Pickup.CoinColor, Faint);
-        GlowNewQuantaPips();
+        float gdt = Time.unscaledDeltaTime;
+        UpdateGoalFlyers(gdt);
+        UpdateGoalPips(starGoal, gm.StarsNeeded, gm.StarsCollected, gdt);
+        // Quanta unlocked this level pulse until collected (for the first few seconds).
+        int nq = gm.LevelQuanta, fresh = gm.NewQuantaThisLevel;
+        bool glowing = st == GameManager.State.Playing && fresh > 0 && gm.LevelTime < 8f;
+        UpdateGoalPips(quantaGoal, Mathf.Max(nq, gm.LevelCoins), gm.LevelCoins, gdt,
+                       glowing ? Mathf.Max(nq - fresh, gm.LevelCoins) : 0, glowing ? nq : 0);
         heartPips.Set(gm.MaxHealth, gm.Lives, Pickup.HeartColor, Faint);
         UpdateControlsHint(st);
 

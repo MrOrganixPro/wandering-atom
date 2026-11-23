@@ -210,17 +210,4 @@ public partial class GameUI
         if (!shown) introQuantaSoundDone = false;
     }
 
-    /// <summary>HUD: the pips of newly unlocked quanta pulse until collected (for the first few seconds).</summary>
-    void GlowNewQuantaPips()
-    {
-        int n = gm.LevelQuanta, fresh = gm.NewQuantaThisLevel;
-        bool glowing = gm.CurrentState == GameManager.State.Playing && fresh > 0 && gm.LevelTime < 8f;
-        float ut = Time.unscaledTime;
-        for (int i = 0; i < coinPips.items.Count; i++)
-        {
-            bool pulse = glowing && i >= n - fresh && i < n && i >= gm.LevelCoins;
-            float s = pulse ? 1.15f + 0.2f * Mathf.Sin(ut * 6f) : 1f;
-            coinPips.items[i].style.scale = new Scale(new Vector3(s, s, 1f));
-        }
-    }
 }

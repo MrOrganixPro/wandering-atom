@@ -26,6 +26,17 @@ public static class Codex
         return seen;
     }
 
+    /// <summary>Dev: marks an entry as never seen again.</summary>
+    public static void Forget(string id)
+    {
+        cache[id] = false;
+        PlayerPrefs.DeleteKey(Prefix + id);
+        PlayerPrefs.Save();
+    }
+
+    /// <summary>Dev: drops the in-memory cache (after the saved data was wiped from outside).</summary>
+    public static void ClearCache() => cache.Clear();
+
     public static void See(string id)
     {
         if (Seen(id)) return;

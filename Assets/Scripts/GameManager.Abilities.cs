@@ -54,7 +54,7 @@ public partial class GameManager
     }
     public bool AbilityAiming => abilityAiming;
     float AbilityCooldownTime(AbilityKind k) =>
-        k == AbilityKind.Dash ? dashCooldown : k == AbilityKind.Blast ? blastCooldown : alkaliCooldown;
+        k == AbilityKind.Dash ? dashCooldown : k == AbilityKind.Blast ? blastCooldown : AlkaliCooldownTime;
     /// <summary>1 right after use (or while the alkali electron is out), 0 when ready again.</summary>
     public float AbilityCooldown01
     {
@@ -143,7 +143,7 @@ public partial class GameManager
     {
         if (!pendulum.ThrowOutermost(out Vector2 from)) return;
         AlkaliShot.Launch(from, to, this);
-        abilityCooldown = alkaliCooldown;
+        abilityCooldown = AlkaliCooldownTime;
         Sfx.Play("boost", 0.6f);
     }
 

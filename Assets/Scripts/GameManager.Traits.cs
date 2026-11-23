@@ -10,7 +10,7 @@ using UnityEngine;
 ///    Upgrades: Stronger Pull, Wider Grasp, Radical Snatch.
 ///  - Alkali metal (Li, Na, K, Rb, Cs, Fr): its outermost electron glows differently and can be
 ///    thrown with the ability button (see GameManager.Abilities and AlkaliShot).
-///    Upgrades: Bigger Blast, Longer Throw, Wider Path.
+///    Upgrades: Bigger Blast, Longer Throw, Wider Path, Quick Recovery.
 /// And the Conductive character: conductivity builds up over time (to 5). An electron it would
 /// lose becomes a zap instead (1 conductivity), hopping between enemies for 1 damage each. One tick
 /// past full makes it overcharged: the next enemy that comes close is zapped for free.
@@ -39,7 +39,10 @@ public partial class GameManager
     [Tooltip("Alkali: enemies this close to the electron's path are destroyed.")]
     public float alkaliPathRadius = 0.7f;
     public float alkaliBlastRadius = 2.2f;
-    public float alkaliCooldown = 1f;
+    [Tooltip("Alkali: seconds between throws (before Quick Recovery).")]
+    public float alkaliCooldown = 2.5f;
+    [Tooltip("Alkali Quick Recovery: seconds taken off the cooldown per upgrade (3 of them bring 2.5 s down to 1 s).")]
+    public float alkaliCooldownPerUpgrade = 0.5f;
     [Tooltip("Alkali: speed dust and black holes are pushed away at.")]
     public float alkaliHazardSpeed = 18f;
     [Tooltip("Alkali Bigger Blast: blast radius added per upgrade.")]
@@ -85,7 +88,7 @@ public partial class GameManager
 
     int upgHopRange, upgHopCount, upgChargeRate;
     int upgHalogenPull, upgHalogenGrasp, upgHalogenSnatch;
-    int upgAlkaliBlast, upgAlkaliRange, upgAlkaliPath;
+    int upgAlkaliBlast, upgAlkaliRange, upgAlkaliPath, upgAlkaliReload;
     bool wasNobleForm;
     ElementTrait lastTrait;
     float nobleLinger, proclaimTimer;
@@ -149,6 +152,7 @@ public partial class GameManager
     public float AlkaliThrowRange => alkaliThrowRange + upgAlkaliRange * alkaliRangePerUpgrade;
     public float AlkaliBlastRadius => alkaliBlastRadius + upgAlkaliBlast * alkaliBlastPerUpgrade;
     public float AlkaliPathRadius => alkaliPathRadius + upgAlkaliPath * alkaliPathPerUpgrade;
+    public float AlkaliCooldownTime => Mathf.Max(0.2f, alkaliCooldown - upgAlkaliReload * alkaliCooldownPerUpgrade);
 
     // ------------------------------------------------------------- noble atom
 
@@ -213,7 +217,7 @@ public partial class GameManager
     {
         upgHopRange = upgHopCount = upgChargeRate = 0;
         upgHalogenPull = upgHalogenGrasp = upgHalogenSnatch = 0;
-        upgAlkaliBlast = upgAlkaliRange = upgAlkaliPath = 0;
+        upgAlkaliBlast = upgAlkaliRange = upgAlkaliPath = upgAlkaliReload = 0;
         wasNobleForm = false;
         lastTrait = ElementTrait.None;
         nobleLinger = proclaimTimer = 0f;

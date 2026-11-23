@@ -82,9 +82,10 @@ public partial class GameUI
 
         Beat(Big("Then — impact.", "Ve sonra... çarpışma.")).flash = true;
 
-        Beat(Line("Your core began to " + B("pull") + ".", "Çekirdeğin " + B("çekmeye") + " başladı."),
-             Line("Every " + Hi("electron", e) + " made you a new element.",
-                  "Her " + Hi("elektron", e) + " seni yeni bir elemente dönüştürdü."),
+        Beat(Line("Your core began to " + B("pull") + " protons and neutrons.",
+                  "Çekirdeğin proton ve nötronları " + B("çekmeye") + " başladı."),
+             Line("Every " + Hi("electron", e) + " you collected made you a new element.",
+                  "Topladığın her " + Hi("elektron", e) + " seni yeni bir elemente dönüştürdü."),
              Line(Hi("Hydrogen. Helium. Carbon. Neon...", e), Hi("Hidrojen. Helyum. Karbon. Neon...", e)));
 
         Beat(Line("Stray particles fill the chamber.", "Hazne başıboş parçacıklarla dolu."),
@@ -98,7 +99,8 @@ public partial class GameUI
              Line("Collect " + Hi("quanta", Pickup.CoinColor) + " to evolve.",
                   "Evrimleşmek için " + Hi("kuanta", Pickup.CoinColor) + " biriktir."));
 
-        Beat(Line("They will run this again. And again.", "Bunu yine yapacaklar. Ve yine."),
+        Beat(Line("They will run this experiment again and again,", "Bu deneyi tekrar tekrar yapacaklar,"),
+             Line("until you succeed and grow enough.", "sen başarıp yeterince büyüyene kadar."),
              Blank(),
              Big("Make it count.", "Her birinin hakkını ver.")
         ).extraHold = 1.2f;

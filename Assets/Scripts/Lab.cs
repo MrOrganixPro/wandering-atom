@@ -99,6 +99,18 @@ public static class Lab
 
     public static float ResearchMultiplier => 1f + ResearchPerLevel * Level(LabPerk.Research);
 
+    /// <summary>Research Data still needed to buy every level not yet researched.</summary>
+    public static int RemainingCost
+    {
+        get
+        {
+            int total = 0;
+            for (int i = 0; i < Costs.Length; i++)
+                for (int lvl = Level((LabPerk)i); lvl < Costs[i].Length; lvl++) total += Costs[i][lvl];
+            return total;
+        }
+    }
+
     /// <summary>Research Data needed to buy every level of every perk.</summary>
     public static int TotalCost
     {
@@ -110,13 +122,26 @@ public static class Lab
         }
     }
 
-    /// <summary>Dev tool: forgets every researched perk and sets the bank to exactly 'data'.</summary>
-    public static void DevReset(int data)
+    // ---- dev tools (Pendulum > Dev menu in the editor)
+
+    /// <summary>Dev: sets a perk's level directly (no cost, no discovery check). 0 forgets it.</summary>
+    public static void DevSetLevel(LabPerk p, int level)
+    {
+        if (level <= 0) PlayerPrefs.DeleteKey(LevelPrefix + p);
+        else PlayerPrefs.SetInt(LevelPrefix + p, Mathf.Min(level, MaxLevel(p)));
+        PlayerPrefs.Save();
+    }
+
+    /// <summary>Dev: forgets every researched perk and the equipped Excited Atom ability (the bank stays).</summary>
+    public static void DevResetResearch()
     {
         foreach (LabPerk p in System.Enum.GetValues(typeof(LabPerk))) PlayerPrefs.DeleteKey(LevelPrefix + p);
-        PlayerPrefs.DeleteKey("Pendulum_Lab_NobleEquip");
-        Data = data;   // saves
+        PlayerPrefs.DeleteKey(EquipKey);
+        PlayerPrefs.Save();
     }
+
+    public static void DevSetData(int data) => Data = data;   // saves
+    public static void DevClearRecord() { PlayerPrefs.DeleteKey(RecordKey); PlayerPrefs.Save(); }
 
     // ------------------------------------------------------------- perks
 
@@ -237,6 +262,7 @@ public static class Lab
     // ------------------------------------------------------------- Excited Atom ability
 
     const string NobleEquipKey = "Pendulum_Lab_NobleEquip";
+    const string EquipKey = NobleEquipKey;
 
     /// <summary>
     /// The Excited Atom brings one ability: the equipped one if researched, otherwise whichever

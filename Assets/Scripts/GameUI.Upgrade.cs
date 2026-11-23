@@ -349,6 +349,7 @@ public partial class GameUI
             case GameManager.UpgradeType.AlkaliBlast: return ProcSprites.Ring;
             case GameManager.UpgradeType.AlkaliRange:
             case GameManager.UpgradeType.AlkaliPath: return ProcSprites.Arrow;
+            case GameManager.UpgradeType.AlkaliReload: return ProcSprites.TurnArrow;
             default: return ProcSprites.Arrow;   // Speed
         }
     }
