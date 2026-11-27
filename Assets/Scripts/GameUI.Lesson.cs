@@ -211,7 +211,6 @@ public partial class GameUI
             float a = Mathf.Clamp01((lessonClock - LessonFirstLine - i * LessonStagger) / LessonLineFade);
             a = a * a * (3f - 2f * a);
             lessonLines[i].style.opacity = a * e;
-            lessonLines[i].style.translate = new Translate(0f, 12f * (1f - a));
         }
         float hint = Mathf.Clamp01((lessonClock - LessonAllShown) / 0.4f);
         lessonContinue.style.opacity = e * hint * (0.45f + 0.25f * Mathf.Sin(Time.unscaledTime * 3f));

@@ -819,7 +819,7 @@ public partial class GameUI : MonoBehaviour
         m.clip.style.height = 24f * Mathf.Clamp01(progress / (float)Mathf.Max(1, max));
     }
 
-    /// <summary>Short text that pops up at a world position, rises a little and fades.</summary>
+    /// <summary>Short text that pops up at a world position, then fades.</summary>
     public static void FloatText(Vector2 world, string text, Color color, float size = 20f)
     {
         if (instance == null || instance.floatLayer == null) return;
@@ -835,7 +835,7 @@ public partial class GameUI : MonoBehaviour
     {
         var cam = Camera.main;
         if (cam == null || root.panel == null) return;
-        Vector2 w = f.world + Vector2.up * (0.6f + f.age * 0.8f);
+        Vector2 w = f.world + Vector2.up * 0.6f;   // stays where it appeared (fades, doesn't drift)
         Vector2 p = RuntimePanelUtils.CameraTransformWorldToPanel(root.panel, w, cam);
         f.label.style.left = p.x - 150f;
         f.label.style.top = p.y - 15f;

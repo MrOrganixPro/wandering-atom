@@ -4,8 +4,10 @@ using UnityEngine.InputSystem;
 using UnityEngine.UIElements;
 
 /// <summary>
-/// The opening story: a black screen where lines fade in one by one, in silence; the music
-/// fades back in once it is over. Plays the first time the player presses PLAY (then the run
+/// The opening story: a black screen where lines fade in one by one, in silence, each with a
+/// small animated picture above the text (GameUI.StoryArt); the music fades back in once it is
+/// over. The crash: "And then" is typed out letter by letter, the screen goes white with the
+/// blast, and "It crashed." fades in as the white clears. Plays the first time the player presses PLAY (then the run
 /// starts), and again from the title's STORY button. Space / Enter / click shows the whole beat, then moves on; Esc skips it all.
 /// </summary>
 public partial class GameUI
@@ -16,6 +18,10 @@ public partial class GameUI
         public float size, spacing;
         public bool bold;
         public Color color;
+        public bool typed;            // appears letter by letter instead of fading in
+        public StoryArt art;          // the picture shown from this line on
+        public StoryLine Art(StoryArt a) { art = a; return this; }
+        public StoryLine Typed() { typed = true; return this; }
     }
 
     class StoryBeat
@@ -24,7 +30,12 @@ public partial class GameUI
         public bool flash;          // white flash + blast when the beat starts
         public string sfxOnLeave;   // played as the beat fades to black
         public float extraHold;
+        public float lineDelay;     // wait before the first line (lets the flash clear first)
+        public bool cut;            // no fade to black: cuts straight to the next beat
+        public float hold = -1f;    // fixed hold once shown (-1: by text length)
     }
+
+    const float StoryTypeTime = 0.16f;      // seconds per typed letter
 
     const float StoryLineStagger = 1.15f;   // seconds between the lines of a beat
     const float StoryLineFade = 1.1f;
@@ -73,34 +84,40 @@ public partial class GameUI
 
         Color e = Pickup.OrbColor;
 
-        Beat(Caption("GENEVA  ·  CERN", "CENEVRE  ·  CERN"),
+        Beat(Caption("GENEVA  ·  CERN", "CENEVRE  ·  CERN").Art(StoryArt.Ring),
              Line("One ordinary atom, stripped of its " + Hi("electrons", e) + ",",
-                  Hi("Elektronları", e) + " sökülmüş sıradan bir atom,"),
+                  Hi("Elektronları", e) + " sökülmüş sıradan bir atom,").Art(StoryArt.Stripped),
              Line("hurled around the ring at " + B("99.9999991%") + " of light speed.",
-                  "halkada ışık hızının " + B("%99,9999991") + "'ine kadar hızlandırıldı.")
+                  "halkada ışık hızının " + B("%99,9999991") + "'ine kadar hızlandırıldı.").Art(StoryArt.Racing)
         ).sfxOnLeave = "charge";
 
-        Beat(Big("Then — impact.", "Ve sonra... çarpışma.")).flash = true;
+        // The crash: typed out slowly, then white, then the line under the fading white.
+        var andThen = Beat(Big("And then", "Ve sonra").Typed());
+        andThen.cut = true;
+        andThen.hold = 0.7f;
+        var crash = Beat(Big("It crashed.", "Çarpıştı.").Art(StoryArt.Crash));
+        crash.flash = true;
+        crash.lineDelay = 1.1f;
 
         Beat(Line("Your core began to " + B("pull") + " protons and neutrons.",
-                  "Çekirdeğin proton ve nötronları " + B("çekmeye") + " başladı."),
+                  "Çekirdeğin proton ve nötronları " + B("çekmeye") + " başladı.").Art(StoryArt.Nucleons),
              Line("Every " + Hi("electron", e) + " you collected made you a new element.",
-                  "Topladığın her " + Hi("elektron", e) + " seni yeni bir elemente dönüştürdü."),
-             Line(Hi("Hydrogen. Helium. Carbon. Neon...", e), Hi("Hidrojen. Helyum. Karbon. Neon...", e)));
+                  "Topladığın her " + Hi("elektron", e) + " seni yeni bir elemente dönüştürdü.").Art(StoryArt.Electrons),
+             Line(Hi("Hydrogen. Helium. Carbon. Neon...", e), Hi("Hidrojen. Helyum. Karbon. Neon...", e)).Art(StoryArt.Elements));
 
-        Beat(Line("Stray particles fill the chamber.", "Hazne başıboş parçacıklarla dolu."),
+        Beat(Line("Stray particles fill the chamber.", "Hazne başıboş parçacıklarla dolu.").Art(StoryArt.Stray),
              Line("Your " + Hi("electrons", e) + " are your shield.",
-                  Hi("Elektronların", e) + " senin kalkanın."),
+                  Hi("Elektronların", e) + " senin kalkanın.").Art(StoryArt.Shield),
              Line("Your " + Hi("stability", Pickup.HeartColor) + " is your life.",
-                  Hi("Kararlılığın", Pickup.HeartColor) + " ise canın."));
+                  Hi("Kararlılığın", Pickup.HeartColor) + " ise canın.").Art(StoryArt.Stability));
 
         Beat(Line("Gather " + Hi("photons", Pickup.Gold) + " to move on.",
-                  "İlerlemek için " + Hi("foton", Pickup.Gold) + " topla."),
+                  "İlerlemek için " + Hi("foton", Pickup.Gold) + " topla.").Art(StoryArt.Photon),
              Line("Collect " + Hi("quanta", Pickup.CoinColor) + " to evolve.",
-                  "Evrimleşmek için " + Hi("kuanta", Pickup.CoinColor) + " biriktir."));
+                  "Evrimleşmek için " + Hi("kuanta", Pickup.CoinColor) + " biriktir.").Art(StoryArt.Quanta));
 
-        Beat(Line("They will run this experiment again and again,", "Bu deneyi tekrar tekrar yapacaklar,"),
-             Line("until you succeed and grow enough.", "sen başarıp yeterince büyüyene kadar."),
+        Beat(Line("They will run this experiment again and again,", "Bu deneyi tekrar tekrar yapacaklar,").Art(StoryArt.Loop),
+             Line("until you succeed and grow enough.", "sen başarıp yeterince büyüyene kadar.").Art(StoryArt.Grow),
              Blank(),
              Big("Make it count.", "Her birinin hakkını ver.")
         ).extraHold = 1.2f;
@@ -153,6 +170,9 @@ public partial class GameUI
         storyLabels.Clear();
 
         StoryBeat b = storyBeats[index];
+        bool anyArt = false;
+        foreach (var line in b.lines) if (line.art != StoryArt.None) anyArt = true;
+        BeginStoryArt(anyArt);
         foreach (var line in b.lines)
         {
             var l = Text(storyBody, line.text, line.size, line.bold, line.color, TextAnchor.MiddleCenter, true);
@@ -160,8 +180,10 @@ public partial class GameUI
             l.style.marginBottom = line.size * 0.45f;
             l.style.letterSpacing = line.spacing;
             l.style.opacity = 0f;
+            if (line.typed) l.text = "";
             storyLabels.Add(l);
         }
+        storyTyped = 0;
 
         if (b.flash)
         {
@@ -181,11 +203,36 @@ public partial class GameUI
         if (!string.IsNullOrEmpty(sfx)) Sfx.Play(sfx, 0.8f);
     }
 
-    static float StoryReveal(StoryBeat b) => (b.lines.Count - 1) * StoryLineStagger + StoryLineFade;
+    /// <summary>When line i starts to appear, and how long it takes (typed lines: letter by letter).</summary>
+    static float StoryLineStart(StoryBeat b, int i) => b.lineDelay + i * StoryLineStagger;
+    static float StoryLineTime(StoryLine l) => l.typed ? Mathf.Max(1, PlainLength(l.text)) * StoryTypeTime : StoryLineFade;
+
+    static float StoryReveal(StoryBeat b)
+    {
+        float end = 0f;
+        for (int i = 0; i < b.lines.Count; i++) end = Mathf.Max(end, StoryLineStart(b, i) + StoryLineTime(b.lines[i]));
+        return end;
+    }
+
+    static int PlainLength(string text)
+    {
+        int n = 0;
+        bool tag = false;
+        foreach (char c in text)
+        {
+            if (c == '<') tag = true;
+            else if (c == '>') tag = false;
+            else if (!tag) n++;
+        }
+        return n;
+    }
+
+    int storyTyped;   // letters of the typed line shown so far (for the tick sound)
 
     /// <summary>How long a fully shown beat stays before moving on by itself (longer text, longer read).</summary>
     static float StoryHold(StoryBeat b)
     {
+        if (b.hold >= 0f) return b.hold;
         int chars = 0;
         foreach (var line in b.lines)
         {
@@ -270,11 +317,16 @@ public partial class GameUI
         {
             if (storyLeaving) storyClock = Mathf.Max(storyClock, storyLeaveAt + StoryBeatFadeOut + StoryBeatGap);
             else if (storyClock < reveal) storyClock = reveal;   // show the whole beat now
+            else if (b.cut && storyBeat + 1 < storyBeats.Count) { StartStoryBeat(storyBeat + 1); return; }
             else LeaveStoryBeat();
         }
         else storyClock += dt;
 
-        if (!storyLeaving && storyClock >= reveal + StoryHold(b)) LeaveStoryBeat();
+        if (!storyLeaving && storyClock >= reveal + StoryHold(b))
+        {
+            if (b.cut && storyBeat + 1 < storyBeats.Count) { StartStoryBeat(storyBeat + 1); return; }
+            LeaveStoryBeat();
+        }
         if (storyLeaving && storyClock >= storyLeaveAt + StoryBeatFadeOut + StoryBeatGap)
         {
             if (storyBeat + 1 >= storyBeats.Count)
@@ -283,15 +335,36 @@ public partial class GameUI
                 return;
             }
             StartStoryBeat(storyBeat + 1);
+            b = storyBeats[storyBeat];   // the rest of this frame works on the new beat
         }
 
         float fadeOut = storyLeaving ? Mathf.Clamp01(1f - (storyClock - storyLeaveAt) / StoryBeatFadeOut) : 1f;
-        for (int i = 0; i < storyLabels.Count; i++)
+        StoryArt latest = StoryArt.None;   // the picture of the newest line that has started
+        for (int i = 0; i < storyLabels.Count && i < b.lines.Count; i++)
         {
-            float a = Mathf.Clamp01((storyClock - i * StoryLineStagger) / StoryLineFade);
+            StoryLine line = b.lines[i];
+            float since = storyClock - StoryLineStart(b, i);
+            if (line.typed)
+            {
+                // Letter by letter, each with a soft tick.
+                int n = Mathf.Clamp(Mathf.FloorToInt(since / StoryTypeTime) + 1, 0, line.text.Length);
+                if (since < 0f) n = 0;
+                if (n > storyTyped)
+                {
+                    if (line.text[n - 1] != ' ') Sfx.Play("lock", 0.3f);
+                    storyTyped = n;
+                }
+                storyLabels[i].text = line.text.Substring(0, n);
+                storyLabels[i].style.opacity = fadeOut;
+                continue;
+            }
+            float a = Mathf.Clamp01(since / StoryLineFade);
             a = a * a * (3f - 2f * a);
             storyLabels[i].style.opacity = a * fadeOut;
-            storyLabels[i].style.translate = new Translate(0f, 12f * (1f - a));
+            // Pictures don't wait for the line delay: the crash tracks burst out with the white.
+            if (since + b.lineDelay >= 0f && line.art != StoryArt.None) latest = line.art;
         }
+        if (latest != StoryArt.None) ShowStoryArt(latest);
+        UpdateStoryArt(dt, fadeOut);
     }
 }

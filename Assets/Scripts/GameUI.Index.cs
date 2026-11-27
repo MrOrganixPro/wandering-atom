@@ -416,7 +416,6 @@ public partial class GameUI
         }
         float e = attackTipFade * attackTipFade * (3f - 2f * attackTipFade);
         attackTip.style.opacity = e;
-        attackTip.style.translate = new Translate(0f, 6f * (1f - e));
     }
 
     void ShowAttack(Attack a)
