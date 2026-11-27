@@ -221,7 +221,7 @@ public partial class GameUI
                 u.arrived = true;
                 u.head.style.opacity = 0f;
                 foreach (var d in u.trail) d.style.opacity = 0f;
-                Sfx.Play("orb", 0.8f);
+                Sfx.Play("neutrinoLand", 0.8f);
             }
 
             // ---- The lock breaks.

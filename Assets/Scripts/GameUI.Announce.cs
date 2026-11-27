@@ -10,12 +10,16 @@ public partial class GameUI
     VisualElement announce, announceBarL, announceBarR;
     Label announceTitle;
     float announceAge = 99f, announceLife = 1f;
+    bool announceBeeps;
 
-    /// <summary>Shows a warning banner for 'duration' seconds of play.</summary>
-    public static void Announce(string title, Color color, float duration)
+    /// <summary>
+    /// Shows a banner for 'duration' seconds of play. With no 'sound' it is a warning that beeps
+    /// every half second; otherwise that sound plays once ("" = silent).
+    /// </summary>
+    public static void Announce(string title, Color color, float duration, string sound = null)
     {
         if (instance == null || instance.announce == null) return;
-        instance.ShowAnnounce(title, color, duration);
+        instance.ShowAnnounce(title, color, duration, sound);
     }
 
     void BuildAnnounce()
@@ -45,7 +49,7 @@ public partial class GameUI
         return bar;
     }
 
-    void ShowAnnounce(string title, Color color, float duration)
+    void ShowAnnounce(string title, Color color, float duration, string sound)
     {
         announceTitle.text = title;
         announceTitle.style.color = color;
@@ -53,7 +57,9 @@ public partial class GameUI
             foreach (var chevron in bar.Children()) chevron.style.backgroundColor = color;
         announceLife = Mathf.Max(0.5f, duration);
         announceAge = 0f;
-        Sfx.Play("warn");
+        announceBeeps = sound == null;
+        if (announceBeeps) Sfx.Play("warn");
+        else if (sound != "") Sfx.Play(sound);
     }
 
     void UpdateAnnounce(GameManager.State st)
@@ -64,7 +70,7 @@ public partial class GameUI
             float before = announceAge;
             announceAge += Time.unscaledDeltaTime;
             // A warning beep every half second while it's up.
-            if (announceAge < announceLife && Mathf.Floor(before / 0.5f) != Mathf.Floor(announceAge / 0.5f))
+            if (announceBeeps && announceAge < announceLife && Mathf.Floor(before / 0.5f) != Mathf.Floor(announceAge / 0.5f))
                 Sfx.Play("warn", 0.7f);
         }
         else if (st != GameManager.State.Paused) announceAge = 99f;   // level over / menus: drop it

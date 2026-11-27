@@ -152,7 +152,7 @@ public partial class GameUI
                 f.e.RemoveFromHierarchy();
                 goalFlyers.RemoveAt(i);
                 f.line.inFlight = Mathf.Max(0, f.line.inFlight - 1);
-                Sfx.Play("lock", 0.35f);
+                Sfx.Play("tick", 0.35f);
                 continue;
             }
             PlaceFlyer(f);

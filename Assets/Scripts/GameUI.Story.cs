@@ -351,7 +351,7 @@ public partial class GameUI
                 if (since < 0f) n = 0;
                 if (n > storyTyped)
                 {
-                    if (line.text[n - 1] != ' ') Sfx.Play("lock", 0.3f);
+                    if (line.text[n - 1] != ' ') Sfx.Play("tick", 0.3f);
                     storyTyped = n;
                 }
                 storyLabels[i].text = line.text.Substring(0, n);

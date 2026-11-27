@@ -560,7 +560,7 @@ public partial class GameUI
         n.root.RegisterCallback<PointerEnterEvent>(_ =>
         {
             if (labDragging && labDragMoved) return;   // no tips while dragging the map
-            if (labHover != index && labReveal >= LabRevealEnd) Sfx.Play("lock", 0.25f);
+            if (labHover != index && labReveal >= LabRevealEnd) Sfx.Play("tick", 0.25f);
             labHover = index;
         });
         n.root.RegisterCallback<PointerLeaveEvent>(_ => { if (labHover == index) labHover = -1; });
@@ -660,7 +660,7 @@ public partial class GameUI
         {
             if (Lab.IsExcitedAbility(n.perk)) Lab.Equip(n.perk);   // a fresh ability is equipped right away
             labBankPop = 1f;
-            Sfx.Play("orb", 0.55f);
+            Sfx.Play("research", 0.55f);
             labPulses.Add(new LabPulse { path = LabPathTo(n), target = n });
         }
         else
@@ -751,7 +751,7 @@ public partial class GameUI
         labPressNode = -1;
         labPan = new Vector2(0f, 200f);   // opens with the core low, so the characters show
         SyncLab();
-        Sfx.Play("orb", 0.5f);
+        Sfx.Play("uiOpen", 0.5f);
     }
 
     void CloseLab()
@@ -1222,7 +1222,7 @@ public partial class GameUI
         AddChooserCard(GameManager.Character.None);
         foreach (GameManager.Character c in Lab.Characters)
             if (Lab.CharacterUnlocked(c)) AddChooserCard(c);
-        Sfx.Play("orb", 0.5f);
+        Sfx.Play("uiOpen", 0.5f);
     }
 
     void HideChooser()
@@ -1313,7 +1313,7 @@ public partial class GameUI
         payoutTotal.text = "+" + shown;
         if (shown > payoutTicked && t >= From)
         {
-            if (shown / 3 > payoutTicked / 3 || shown == p.gain) Sfx.Play("lock", 0.5f);
+            if (shown / 3 > payoutTicked / 3 || shown == p.gain) Sfx.Play("tick", 0.5f);
             payoutTicked = shown;
             if (shown == p.gain) Sfx.Play("coin", 0.9f);
         }

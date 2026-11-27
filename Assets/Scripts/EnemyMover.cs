@@ -114,7 +114,9 @@ public class EnemyMover : MonoBehaviour
     Vector2 bondMid, bondDrift;
     SpriteRenderer[] fadeRenderers;
     float[] fadeAlphas;
-    const float LeaveTime = 1.8f, PositroniumTime = 0.6f;
+    const float LeaveTime = 1.8f;
+    /// <summary>How long a positron and an electron spiral together before annihilating (Sfx sizes its sound to it).</summary>
+    public const float PositroniumTime = 0.6f;
     bool coreStruck;                                       // ... and whether it went through the core
     Vector2 lastPos;
 
@@ -517,7 +519,7 @@ public class EnemyMover : MonoBehaviour
         bondRadius = Mathf.Max(0.18f, d.magnitude);
         bondAngle = Mathf.Atan2(d.y, d.x);
         bondDrift = moveDirection * speed * 0.25f;
-        Sfx.Play("charge", 0.4f);
+        Sfx.Play("positronium", 0.55f);   // exactly as long as the spiral
     }
 
     void UpdateBond(float dt)
@@ -545,7 +547,7 @@ public class EnemyMover : MonoBehaviour
                 ParticleBursts.Emit(bondMid, a * (16f - i * 3f), photon, 0.24f - i * 0.05f, 0.5f, 0.6f);
                 ParticleBursts.Emit(bondMid, -a * (16f - i * 3f), photon, 0.24f - i * 0.05f, 0.5f, 0.6f);
             }
-            Sfx.Play("zap", 0.6f);
+            Sfx.Play("annihilate", 0.7f);
             if (GameManager.Instance != null) GameManager.Instance.AddShake(0.12f);
             dead = true;
             Destroy(gameObject);

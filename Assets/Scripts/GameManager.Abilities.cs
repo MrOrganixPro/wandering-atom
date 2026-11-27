@@ -76,7 +76,7 @@ public partial class GameManager
     /// <summary>The HUD button: starts aiming, or cancels it if already aiming.</summary>
     public void ToggleAbilityAim()
     {
-        if (abilityAiming) { EndAbilityAim(); Sfx.Play("lock", 0.5f); return; }
+        if (abilityAiming) { EndAbilityAim(); Sfx.Play("tick", 0.5f); return; }
         if (!AbilityReady) { Sfx.Play("full", 0.5f); return; }
         abilityAiming = true;
         aimStartFrame = Time.frameCount;
@@ -121,7 +121,7 @@ public partial class GameManager
         if ((kb != null && kb.escapeKey.wasPressedThisFrame) || (mouse != null && mouse.rightButton.wasPressedThisFrame))
         {
             EndAbilityAim();
-            Sfx.Play("lock", 0.5f);
+            Sfx.Play("tick", 0.5f);
             return;
         }
         bool clicked = pointer != null && pointer.press.wasPressedThisFrame && !PointerOverAbilityButton;

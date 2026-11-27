@@ -69,8 +69,7 @@ public class SpawnWarning : MonoBehaviour
             for (int i = 0; i < shown; i++) pips[i] = Make("Pip" + i, ProcSprites.Ball, 41, 0.12f);
         }
 
-        Sfx.Play("warn");
-        if (IsBundle) Sfx.Play("warn", 0.7f);
+        // Its sound is played by the EnemySpawner, which knows what is coming.
     }
 
     SpriteRenderer Make(string name, Sprite sprite, int order, float scale)

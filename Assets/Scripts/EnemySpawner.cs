@@ -22,6 +22,12 @@ public class EnemySpawner : MonoBehaviour
     [Tooltip("How fast the interval shrinks while you stay in a level (it approaches 0, never reaches it).")]
     public float intervalDropPerSecond = 0.003f;
 
+    [Header("Warning Sounds")]
+    [Tooltip("Seconds between waves at which free radicals and alpha particles play the lowest approach sound.")]
+    public float approachSlowInterval = 1.8f;
+    [Tooltip("Seconds between waves at which they play the highest one (the sounds in between split the range evenly).")]
+    public float approachFastInterval = 0.4f;
+
     [Header("Endless Scaling")]
     [Tooltip("Nothing is capped: every per-level stat keeps growing forever, just more slowly over time. "
            + "After this many levels, a stat's growth per level has halved (after 3x this many, it's a quarter).")]
@@ -204,6 +210,13 @@ public class EnemySpawner : MonoBehaviour
         }
     }
 
+    /// <summary>Drops every pending spawn warning (and what it would have spawned); spawning carries on.</summary>
+    public void CancelWarnings()
+    {
+        foreach (var w in warnings) if (w != null) Destroy(w);
+        warnings.Clear();
+    }
+
     public void StopSpawning()
     {
         running = false;
@@ -241,14 +254,54 @@ public class EnemySpawner : MonoBehaviour
             if (timer <= 0f)
             {
                 SpawnWave();
-                float interval = startInterval * Mathf.Pow(intervalMultiplierPerLevel, Soft(level - 1));
-                interval *= Mathf.Exp(-elapsed * intervalDropPerSecond / Mathf.Max(0.01f, interval));
-                interval /= 1f + attractionRatePerElectron * ExtraElectrons;   // a bigger atom pulls harder
-                timer = interval;
+                timer = WaveInterval();
             }
         }
         enemies.RemoveAll(e => e == null);
         warnings.RemoveAll(w => w == null);
+    }
+
+    /// <summary>Seconds between waves right now.</summary>
+    float WaveInterval()
+    {
+        float interval = startInterval * Mathf.Pow(intervalMultiplierPerLevel, Soft(level - 1));
+        interval *= Mathf.Exp(-elapsed * intervalDropPerSecond / Mathf.Max(0.01f, interval));
+        interval /= 1f + attractionRatePerElectron * ExtraElectrons;   // a bigger atom pulls harder
+        return interval;
+    }
+
+    // -------------------------------------------------------- warning sounds
+
+    /// <summary>
+    /// How fast enemies are spawning, 0..1 between approachSlowInterval and approachFastInterval
+    /// (on a log scale, so each of the approach sounds covers the same ratio of speed-up).
+    /// </summary>
+    float SpawnPace()
+    {
+        float slow = Mathf.Max(0.01f, approachSlowInterval);
+        float fast = Mathf.Clamp(approachFastInterval, 0.005f, slow * 0.99f);
+        return Mathf.Clamp01(Mathf.Log(slow / Mathf.Max(0.001f, WaveInterval())) / Mathf.Log(slow / fast));
+    }
+
+    /// <summary>
+    /// Isotopes and positrons give a short taste of their own sound; everything else plays an
+    /// approach sound that climbs in pitch as the spawning speeds up. (Gamma rays need none:
+    /// they appear on screen and announce themselves with their charge-up.)
+    /// </summary>
+    void PlayWarningSound(EnemyType type, bool bundle)
+    {
+        switch (type)
+        {
+            case EnemyType.Broken:
+                Sfx.PlayHint("sputter", 0.12f, 0.35f);
+                break;
+            case EnemyType.Missile:
+                Sfx.PlayHint("lock", 0.05f, 0.45f, 2, 0.1f);   // two quick lock-on beeps
+                break;
+            default:
+                Sfx.PlayApproach(SpawnPace(), bundle ? 1f : 0.8f);
+                break;
+        }
     }
 
     // ------------------------------------------------------------ attraction
@@ -276,8 +329,7 @@ public class EnemySpawner : MonoBehaviour
                 rain = Rain.Warning;
                 rainClock = 0f;
                 rainSide = Random.Range(0f, 360f);
-                GameUI.Announce(Loc.T("GAMMA RAIN", "GAMA YAĞMURU"), flashColor, gammaRainWarning);
-                Sfx.Play("charge", 0.8f);
+                GameUI.Announce(Loc.T("GAMMA RAIN", "GAMA YAĞMURU"), flashColor, gammaRainWarning, "gammaRain");
                 break;
             case Rain.Warning:
                 if (rainClock < gammaRainWarning) return;
@@ -423,6 +475,7 @@ public class EnemySpawner : MonoBehaviour
         float laneW = type == EnemyType.Brute ? 1.9f * BruteScale : 0f;   // huge enemy, wide lane
         go.AddComponent<SpawnWarning>().Init(start, dir, len, color, warnTime, 1, laneW,
             () => SpawnEnemy(type, color, start, dir, speed));
+        PlayWarningSound(type, false);
     }
 
     void QueueBundle(float fromAngle)
@@ -448,6 +501,7 @@ public class EnemySpawner : MonoBehaviour
                 SpawnEnemy(EnemyType.Shard, bundleColor, p, dir, speed);
             }
         });
+        PlayWarningSound(EnemyType.Shard, true);
     }
 
     /// <summary>The Flash is its own telegraph: it appears just inside the screen edge and aims.</summary>

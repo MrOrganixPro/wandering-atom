@@ -284,7 +284,7 @@ public partial class GameUI
         if (indexOpen) return;
         indexOpen = true;
         builtTab = -1;
-        Sfx.Play("orb", 0.5f);
+        Sfx.Play("uiOpen", 0.5f);
     }
 
     void CloseIndex()

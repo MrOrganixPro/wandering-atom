@@ -935,7 +935,7 @@ public partial class GameManager : MonoBehaviour
             case UpgradeType.AlkaliReload: upgAlkaliReload = Mathf.Min(maxAlkaliUpgrades, upgAlkaliReload + 1); break;
         }
         ApplyUpgrades();
-        Sfx.Play(IsCharacter(picked) ? "level" : "orb");
+        Sfx.Play(IsCharacter(picked) ? "level" : "pick");
         lastPicked = picked;
         lastPickIndex = index;
         lastPickVersion++;
@@ -1297,7 +1297,7 @@ public partial class GameManager : MonoBehaviour
         if (!(hardReset && level == 1) && upgRegen > 0 && lives < MaxHealth)
         {
             lives++;   // Regeneration (rare upgrade)
-            Sfx.Play("orb");
+            Sfx.Play("heal");
             ParticleBursts.Burst(pendulum.PivotPosition, Pickup.HeartColor, 24, 6f, 0.3f, 0.8f);
         }
         levelCoins = 0;
@@ -1351,7 +1351,7 @@ public partial class GameManager : MonoBehaviour
         levelStartHeartProgress = heartRecycleProgress;
         SetBest(level);
 
-        Sfx.Play("start");
+        Sfx.Play("levelStart");
         SetState(State.Playing);
     }
 
@@ -1359,7 +1359,7 @@ public partial class GameManager : MonoBehaviour
     {
         spawner.ClearAll(true);
         PopLeftoverPickups();
-        Sfx.Play("level");
+        Sfx.Play("levelComplete");
         AddShake(0.3f);
         ParticleBursts.Burst(pendulum.PivotPosition, Pickup.Gold, 40, 9f, 0.35f, 1f);
 
@@ -1561,7 +1561,7 @@ public partial class GameManager : MonoBehaviour
             {
                 heartRecycleProgress = 0;
                 lives = Mathf.Min(MaxHealth, lives + 1);
-                Sfx.Play("orb");
+                Sfx.Play("heal");
                 ParticleBursts.Burst(pendulum.PivotPosition, Pickup.HeartColor, 24, 6f, 0.3f, 0.8f);
                 GameUI.FloatText(at, Loc.T("+1 STABILITY", "+1 KARARLILIK"), Pickup.HeartColor, 26f);
             }
@@ -1619,7 +1619,7 @@ public partial class GameManager : MonoBehaviour
                 return;
             case PickupKind.Heart:
                 lives = Mathf.Min(MaxHealth, lives + 1);
-                Sfx.Play("orb");
+                Sfx.Play("heal");
                 return;
             case PickupKind.Neutrino:
                 neutrinos++;
@@ -1740,20 +1740,44 @@ public partial class GameManager : MonoBehaviour
         Sfx.Play("hit");
         if (lives <= 0 && !secondWindUsed && Lab.Level(LabPerk.SecondWind) > 0)
         {
-            // Lab: Second Wind. Once per run the core holds together at 1 stability.
+            // Lab: Second Wind. Once per run the core holds together at 1 stability: in slow motion
+            // it almost blows apart, then lets it all out as a wave that clears the screen.
             secondWindUsed = true;
             lives = 1;
-            pendulum.SecondWind(2f);
-            hitStop = 0.25f;
-            GameUI.Announce(Loc.T("SECOND WIND", "İKİNCİ NEFES"), Color.white, 2f);
+            float dur = Mathf.Clamp(Sfx.Length("secondWind"), 1f, 6f);
+            pendulum.BeginSecondWind(dur);
+            Sfx.Play("secondWind");
+            GameUI.Announce(Loc.T("SECOND WIND", "İKİNCİ NEFES"), Color.white, dur + 0.6f, "");
             return;
         }
         if (lives <= 0) EndGame();
     }
 
+    /// <summary>Second Wind's release: a wave from the core that destroys every enemy on screen.</summary>
+    public void SecondWindBurst()
+    {
+        Vector2 c = pendulum.PivotPosition;
+        Vector2 half = HalfExtents, vc = ViewCenter;
+        float radius = 0f;   // out to the farthest corner of the view
+        for (int i = 0; i < 4; i++)
+        {
+            Vector2 corner = vc + new Vector2(i % 2 == 0 ? -half.x : half.x, i < 2 ? -half.y : half.y);
+            radius = Mathf.Max(radius, Vector2.Distance(c, corner));
+        }
+        spawner.CancelWarnings();
+        NobleWave.Spawn(c, radius + 0.5f, 14f, Color.white, false);
+        ShockRing.Spawn(c, radius * 0.6f, Color.white);
+        Sfx.Play("repel");
+        Sfx.Play("explode", 0.6f);
+        AddShake(0.9f);
+    }
+
     public void AddShake(float amount) => shake = Mathf.Max(shake, amount);
 
     // ---------------------------------------------------------- energy levels
+
+    /// <summary>Time scale while Second Wind builds up.</summary>
+    const float SecondWindSlowMo = 0.12f;
 
     public const float TeachMinTime = 1f;   // the lesson can't be closed sooner
 
@@ -1781,13 +1805,13 @@ public partial class GameManager : MonoBehaviour
             Sfx.Play("charge", 0.7f);
         }
         pendingNewQuanta += gained * coinsPerExtraShell;
-        Sfx.Play("level", 0.8f);
+        Sfx.Play("energy", 0.8f);
         AddShake(0.2f);
         ParticleBursts.Burst(pendulum.PivotPosition, Pickup.CoinColor, 36, 8f, 0.3f, 0.9f);
 
         if (!Teach(LessonKind.Shell, ShellLessonKey))
         {
-            GameUI.Announce(Loc.T("ENERGY LEVEL COMPLETE", "ENERJİ SEVİYESİ TAMAMLANDI"), Pickup.CoinColor, 2.6f);
+            GameUI.Announce(Loc.T("ENERGY LEVEL COMPLETE", "ENERJİ SEVİYESİ TAMAMLANDI"), Pickup.CoinColor, 2.6f, "");   // its sound already played
         }
     }
 
@@ -1917,6 +1941,7 @@ public partial class GameManager : MonoBehaviour
         if (state != State.Paused && state != State.Upgrade)
         {
             if ((teaching || abilityAiming) && state == State.Playing) Time.timeScale = 0f;   // lesson / aiming an ability
+            else if (pendulum != null && pendulum.SecondWinding && state == State.Playing) Time.timeScale = SecondWindSlowMo;
             else if (hitStop > 0f)
             {
                 hitStop -= udt;

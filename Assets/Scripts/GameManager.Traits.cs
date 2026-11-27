@@ -157,7 +157,7 @@ public partial class GameManager
         ParticleBursts.Burst(p, HalogenColor, 18, 6f, 0.25f, 0.5f);
         AbilityAim.Streak(p, pendulum.PivotPosition, 0.18f, HalogenColor, 0.3f);
         Sfx.Play("orb");
-        Sfx.Play("lock", 0.5f);
+        Sfx.Play("tick", 0.5f);
         return true;
     }
 
@@ -290,7 +290,7 @@ public partial class GameManager
                 if (conductivity < MaxConductivity)
                 {
                     conductivity++;
-                    Sfx.Play("lock", 0.35f);
+                    Sfx.Play("conduct", 0.35f);
                 }
                 else
                 {
@@ -668,27 +668,33 @@ public class AlkaliFire : MonoBehaviour
 
 /// <summary>
 /// Noble Atom, Lab Proclamation of Nobility: a huge gold wave that grows out of the atom,
-/// vaporizing every enemy it passes and pushing dust and black holes away.
+/// vaporizing every enemy it passes and pushing dust and black holes away. Also Second Wind's
+/// release (white, with its own sounds).
 /// </summary>
 public class NobleWave : MonoBehaviour
 {
     const float Life = 0.6f;
     Vector2 center;
+    Color color;
     float radius, hazardSpeed, t;
     readonly HashSet<Hazard> shoved = new HashSet<Hazard>();
 
-    public static void Spawn(Vector2 at, float radius, float hazardSpeed)
+    public static void Spawn(Vector2 at, float radius, float hazardSpeed) =>
+        Spawn(at, radius, hazardSpeed, PendulumController.NobleGold, true);
+
+    public static void Spawn(Vector2 at, float radius, float hazardSpeed, Color c, bool sound)
     {
         var go = new GameObject("NobleWave");
         var w = go.AddComponent<NobleWave>();
         w.center = at;
         w.radius = radius;
         w.hazardSpeed = hazardSpeed;
-        Color c = PendulumController.NobleGold;
+        w.color = c;
         ShockRing.Spawn(at, radius, c);
         ShockRing.Spawn(at, radius * 0.7f, Color.white);
         ParticleBursts.Burst(at, c, 50, 12f, 0.3f, 0.7f);
         ParticleBursts.Burst(at, Color.white, 20, 8f, 0.2f, 0.4f);
+        if (!sound) return;
         Sfx.Play("explode", 0.6f);
         Sfx.Play("level", 0.5f);
     }
@@ -698,7 +704,7 @@ public class NobleWave : MonoBehaviour
         t += Time.deltaTime;
         float k = Mathf.Clamp01(t / Life);
         float r = radius * (1f - (1f - k) * (1f - k) * (1f - k));   // same easing as the ShockRing
-        Color c = PendulumController.NobleGold;
+        Color c = color;
         for (int i = EnemyMover.All.Count - 1; i >= 0; i--)
         {
             var e = EnemyMover.All[i];

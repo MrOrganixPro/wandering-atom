@@ -186,9 +186,13 @@ public class PendulumController : MonoBehaviour
     /// <summary>Ball diameter including the Bigger Balls upgrade.</summary>
     float BallWorldSize => ballSize * ballScale;
     public bool IsBoosting => boostTimer > 0f;
-    public bool CanBeHit => alive && !meltingDown && invulTimer <= 0f;
+    public bool CanBeHit => alive && !ShakingApart && invulTimer <= 0f;
     public bool IsAlive => alive;
     public bool IsMeltingDown => meltingDown;
+    /// <summary>Second Wind is building up (the core almost blows apart, then releases a wave).</summary>
+    public bool SecondWinding => secondWinding;
+    /// <summary>Meltdown or Second Wind: the core is shaking apart and nothing can touch it.</summary>
+    bool ShakingApart => meltingDown || secondWinding;
     public bool IsDragging => dragSource != DragSource.None;
     public int BallCount => balls.Count;
     public int ShellTotal => shellCapacities.Length;
@@ -250,6 +254,8 @@ public class PendulumController : MonoBehaviour
     float invulTimer, hitFlash;
     bool alive = true;
     bool meltingDown;          // out of stability: shaking apart, about to explode
+    bool secondWinding;        // Second Wind: shaking apart, then a wave instead of the blast
+    float secondWindT, secondWindDur;
     float meltdownT, crackleTimer, sparkTimer;
 
     DragSource dragSource = DragSource.None;
@@ -466,9 +472,10 @@ public class PendulumController : MonoBehaviour
         if (alive && pod.gameObject.activeSelf == upgradeHidden) pod.gameObject.SetActive(!upgradeHidden);
 
         // No input while paused, nor on the frame a click fired an Excited Atom ability.
-        if (alive && !meltingDown && Time.timeScale > 0f && Time.frameCount != SuppressInputFrame) ReadInput();
-        else if (!alive || meltingDown) { thrust = Vector2.zero; EndDrag(); }
+        if (alive && !ShakingApart && Time.timeScale > 0f && Time.frameCount != SuppressInputFrame) ReadInput();
+        else if (!alive || ShakingApart) { thrust = Vector2.zero; EndDrag(); }
         if (meltingDown) pivotVel *= Mathf.Exp(-4f * dt);   // grinds to a halt while it comes apart
+        if (secondWinding && Time.timeScale > 0f) pivotVel *= Mathf.Exp(-4f * Time.unscaledDeltaTime);   // real time: the world is in slow motion
 
         Simulate(dt);
         UpdateTurrets(dt);
@@ -480,6 +487,7 @@ public class PendulumController : MonoBehaviour
         }
         UpdateVisuals(dt);
         if (meltingDown) UpdateMeltdown(dt);
+        else if (secondWinding) UpdateSecondWind();
         UpdateNucleus(dt);
     }
 
@@ -561,7 +569,7 @@ public class PendulumController : MonoBehaviour
             sr.color = new Color(Mathf.Clamp01(c.r * kr), Mathf.Clamp01(c.g * kg), Mathf.Clamp01(c.b * kb), tint.a);
         }
         nucleusRadius = R;
-        if (!meltingDown) podGlow.transform.localScale = Vector3.one * 1.3f * (R / nucleusBaseRadius) * 0.9f;
+        if (!ShakingApart) podGlow.transform.localScale = Vector3.one * 1.3f * (R / nucleusBaseRadius) * 0.9f;
     }
 
     /// <summary>Out of stability: the nucleus starts to shake apart (see UpdateMeltdown, Explode).</summary>
@@ -579,13 +587,49 @@ public class PendulumController : MonoBehaviour
     {
         meltdownT += dt;
         float k = Mathf.Clamp01(meltdownT / Mathf.Max(0.1f, meltdownTime));
+        ShakeApart(k, meltdownT, dt);
+        if (meltdownT >= meltdownTime) Explode();
+    }
+
+    /// <summary>
+    /// Lab Second Wind: the core starts shaking apart like a meltdown, slowly (the game runs in
+    /// slow motion meanwhile, so this runs on real time), then releases it as a wave.
+    /// </summary>
+    public void BeginSecondWind(float duration)
+    {
+        if (!alive || meltingDown) return;
+        secondWinding = true;
+        secondWindT = 0f;
+        secondWindDur = Mathf.Max(0.2f, duration);
+        crackleTimer = sparkTimer = 0f;
+        EndDrag();
+    }
+
+    void UpdateSecondWind()
+    {
+        float udt = Time.timeScale > 0f ? Time.unscaledDeltaTime : 0f;   // stops while paused
+        secondWindT += udt;
+        float p = Mathf.Clamp01(secondWindT / secondWindDur);
+        ShakeApart(0.92f * Mathf.Pow(p, 1.6f), secondWindT, udt);        // almost, but not quite
+        if (p < 1f) return;
+
+        secondWinding = false;
+        pod.localPosition = Vector3.zero;
+        invulTimer = Mathf.Max(invulTimer, 2f);
+        ParticleBursts.Burst(PivotPosition, Color.white, 50, 12f, 0.3f, 0.8f);
+        if (GameManager.Instance != null) GameManager.Instance.SecondWindBurst();
+    }
+
+    /// <summary>The core shaking apart, 'k' = 0..1 how close it is to blowing up; 't' is its clock.</summary>
+    void ShakeApart(float k, float t, float dt)
+    {
         Vector2 c = PivotPosition;
 
         // Violent, growing shake; the nucleus throbs and flickers white / red.
         pod.localPosition = (Vector3)(Random.insideUnitCircle * (0.04f + 0.16f * k * k));
-        float throb = 1f + (0.06f + 0.22f * k) * Mathf.Abs(Mathf.Sin(meltdownT * (14f + 40f * k)));
+        float throb = 1f + (0.06f + 0.22f * k) * Mathf.Abs(Mathf.Sin(t * (14f + 40f * k)));
         podBody.transform.localScale *= throb;
-        bool hot = Mathf.Repeat(meltdownT * (5f + 22f * k), 1f) > 0.5f;
+        bool hot = Mathf.Repeat(t * (5f + 22f * k), 1f) > 0.5f;
         podBody.color = Color.Lerp(podColor, hot ? Color.white : new Color(1f, 0.3f, 0.25f), 0.3f + 0.65f * k);
         podGlow.transform.localScale = Vector3.one * (1.3f + 2.2f * k);
         podGlow.color = new Color(1f, 0.55f, 0.4f, 0.35f + 0.5f * k);
@@ -611,7 +655,6 @@ public class PendulumController : MonoBehaviour
         foreach (var b in balls) b.snapFlash = Mathf.Max(b.snapFlash, k * Random.value * 0.8f);
 
         if (GameManager.Instance != null) GameManager.Instance.AddShake(0.1f + 0.25f * k);
-        if (meltdownT >= meltdownTime) Explode();
     }
 
     /// <summary>The core blows apart: a flash and shockwave, every electron is blasted away, and
@@ -1212,7 +1255,7 @@ public class PendulumController : MonoBehaviour
     /// <summary>True if the thruster or any ball overlaps the circle (used for collecting pickups).</summary>
     public bool Touches(Vector2 p, float r)
     {
-        if (!alive || meltingDown) return false;
+        if (!alive || ShakingApart) return false;
         float rc = r + coreRadius + pickupBonus;
         if ((PivotPosition - p).sqrMagnitude < rc * rc) return true;
         float rb = r + BallRadius + pickupBonus;
@@ -1236,7 +1279,7 @@ public class PendulumController : MonoBehaviour
     {
         takenPos = p;
         takenColor = Pickup.OrbColor;
-        if (!alive || meltingDown) return ElectronHit.None;
+        if (!alive || ShakingApart) return ElectronHit.None;
         float rb = r + BallRadius;
         for (int i = 0; i < balls.Count; i++)
         {
@@ -1293,7 +1336,7 @@ public class PendulumController : MonoBehaviour
     {
         b.snapFlash = 1f;
         ParticleBursts.Burst(b.pos, NobleGold, 12, 4.5f, 0.2f, 0.4f);
-        Sfx.Play("lock", 0.7f);
+        Sfx.Play("block", 0.7f);
     }
 
     /// <summary>Size of an electron on the map (for the snatched copies enemies carry off).</summary>
@@ -1334,19 +1377,6 @@ public class PendulumController : MonoBehaviour
     // ---------------------------------------------------------- hit reactions
 
     /// <summary>The thruster or a ball was hit: fire the unlocked Repel blast and Emergency Booster.</summary>
-    /// <summary>Lab Second Wind: a white shockwave (a repel blast, whatever the Repel level) and a moment of invulnerability.</summary>
-    public void SecondWind(float invulnerable)
-    {
-        if (!alive) return;
-        invulTimer = Mathf.Max(invulTimer, invulnerable);
-        int keep = repelLevel;
-        repelLevel = Mathf.Max(1, repelLevel);
-        RepelBlast();
-        repelLevel = keep;
-        ShockRing.Spawn(PivotPosition, 5f, Color.white);
-        ParticleBursts.Burst(PivotPosition, Color.white, 40, 9f, 0.3f, 0.8f);
-    }
-
     void OnHitReaction()
     {
         if (!alive) return;
@@ -1470,7 +1500,7 @@ public class PendulumController : MonoBehaviour
     public void HazardCircle(Vector2 c, float r, Vector2 hazardVel, Color col, float ejectSpeed, bool crushBalls = true,
                              Transform source = null)
     {
-        if (!alive || meltingDown) return;
+        if (!alive || ShakingApart) return;
 
         float rb = r + BallRadius;
         bool hit = false;
@@ -1632,7 +1662,7 @@ public class PendulumController : MonoBehaviour
     /// <summary>True if the circle touches the core or an electron (no pickup reach).</summary>
     public bool Contacts(Vector2 p, float r)
     {
-        if (!alive || meltingDown) return false;
+        if (!alive || ShakingApart) return false;
         float rc = r + coreRadius;
         if ((PivotPosition - p).sqrMagnitude < rc * rc) return true;
         float rb = r + BallRadius;
@@ -1662,6 +1692,7 @@ public class PendulumController : MonoBehaviour
         if (!alive) return;
         alive = false;
         meltingDown = false;
+        secondWinding = false;
         pod.localPosition = Vector3.zero;
         EndDrag();
         ParticleBursts.Burst(PivotPosition, podColor, 40, 10f, 0.35f, 1.1f);
@@ -1679,6 +1710,7 @@ public class PendulumController : MonoBehaviour
     {
         alive = true;
         meltingDown = false;
+        secondWinding = false;
         pod.localPosition = Vector3.zero;
         invulTimer = 0f;
         hitFlash = 0f;
